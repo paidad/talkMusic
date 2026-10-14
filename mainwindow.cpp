@@ -170,6 +170,8 @@ QWidget *MainWindow::createPlayingPanel() {
         const int index = m_lyricList->row(item);
         if (index < m_playback->lyrics().size()) m_playback->seek(m_playback->lyrics()[index].time);
     });
+    m_lyricInfo = label({}, "small"); m_lyricInfo->setObjectName("lyricSource"); m_lyricInfo->setWordWrap(true);
+    m_lyricInfo->setAlignment(Qt::AlignCenter); layout->addWidget(m_lyricInfo);
     layout->addWidget(label("听见此刻，也听见彼此。", "small"), 0, Qt::AlignHCenter);
     return panel;
 }
@@ -214,6 +216,15 @@ QWidget *MainWindow::createLibraryPanel() {
     connect(favorites, &QPushButton::clicked, this, [this, all, favorites] { m_favoritesOnly = true; all->setChecked(false); favorites->setChecked(true); refreshLibrary(); });
     m_songList = new QListWidget; m_songList->setObjectName("songList"); m_songList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); musicLayout->addWidget(m_songList, 1);
     connect(m_songList, &QListWidget::itemDoubleClicked, this, [this](QListWidgetItem *item) { m_playback->playSong(item->data(Qt::UserRole).toString()); });
+    m_songList->setContextMenuPolicy(Qt::CustomContextMenu);
+    connect(m_songList, &QWidget::customContextMenuRequested, this, [this](const QPoint &position) {
+        const auto *item = m_songList->itemAt(position);
+        if (!item || item->data(Qt::UserRole).toString().isEmpty()) return;
+        const auto path = item->data(Qt::UserRole).toString();
+        QMenu menu;
+        auto *remove = menu.addAction(musicIcon("remove"), "从音乐库移除（保留文件）");
+        if (menu.exec(m_songList->viewport()->mapToGlobal(position)) == remove) removeMusic(path);
+    });
     musicLayout->addWidget(label("双击播放 · 歌曲卡片共享本地文件", "small"));
     tabs->addTab(music, "音乐");
     auto *friends = new QWidget; auto *friendsLayout = new QVBoxLayout(friends); friendsLayout->setContentsMargins(0, 18, 0, 0); friendsLayout->setSpacing(12);
@@ -287,12 +298,16 @@ void MainWindow::refreshLibrary() {
         if (m_favoritesOnly && !song.favorite) continue;
         if (!query.isEmpty() && !song.title.contains(query, Qt::CaseInsensitive) && !song.artist.contains(query, Qt::CaseInsensitive)) continue;
         auto *item = new QListWidgetItem(m_songList); item->setData(Qt::UserRole, song.path); item->setSizeHint({180, 65}); item->setToolTip(song.path);
-        auto *row = new QWidget; row->setAttribute(Qt::WA_TransparentForMouseEvents); auto *rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(3, 4, 3, 4); rowLayout->setSpacing(9);
+        auto *row = new QWidget; auto *rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(3, 4, 3, 4); rowLayout->setSpacing(7);
         auto *icon = label({}); icon->setPixmap(musicIcon("music", song.path == m_playback->currentPath() ? red : QColor("#b4a3a8")).pixmap(23, 23)); rowLayout->addWidget(icon);
         auto *text = new QVBoxLayout; text->setSpacing(4);
         auto *title = new ElidedLabel(song.title);
         text->addWidget(title); text->addWidget(label(!QFileInfo::exists(song.path) ? "文件缺失" : song.artist.isEmpty() ? "未知歌手 · 本地音乐" : song.artist, "small")); rowLayout->addLayout(text, 1);
         if (song.favorite) { auto *heart = label({}); heart->setPixmap(musicIcon("heartFilled", red).pixmap(14, 14)); rowLayout->addWidget(heart); }
+        for (auto *child : row->findChildren<QLabel *>()) child->setAttribute(Qt::WA_TransparentForMouseEvents);
+        auto *remove = iconButton("remove", "从音乐库移除（保留文件）"); remove->setObjectName("removeSongButton"); remove->setFixedSize(24, 26); remove->setIconSize({15, 15}); rowLayout->addWidget(remove);
+        const auto path = song.path;
+        connect(remove, &QToolButton::clicked, this, [this, path] { QTimer::singleShot(0, this, [this, path] { removeMusic(path); }); });
         m_songList->setItemWidget(item, row);
         if (song.path == m_playback->currentPath()) m_songList->setCurrentItem(item);
     }
@@ -305,7 +320,12 @@ void MainWindow::refreshLibrary() {
 void MainWindow::refreshCurrentSong() {
     const auto *song = m_library->find(m_playback->currentPath());
     m_favorite->setEnabled(song); m_share->setEnabled(song);
-    if (!song) return;
+    if (!song) {
+        m_songTitle->setText("让音乐开始"); m_songTitle->setToolTip({});
+        m_artist->setText("选择一首歌，开启今天的心情");
+        m_bottomTitle->setText("尚未播放"); m_bottomTitle->setToolTip({}); m_bottomArtist->setText("导入你喜欢的音乐");
+        m_favorite->setIcon(musicIcon("heart")); return;
+    }
     m_songTitle->setText(song->title); m_songTitle->setToolTip(song->title);
     m_artist->setText(song->artist.isEmpty() ? "未知歌手 · 本地音乐" : song->artist);
     m_bottomTitle->setText(QFontMetrics(m_bottomTitle->font()).elidedText(song->title, Qt::ElideRight, 168)); m_bottomTitle->setToolTip(song->title);
@@ -316,10 +336,19 @@ void MainWindow::refreshCurrentSong() {
 
 void MainWindow::refreshLyrics() {
     m_lyricList->clear();
+    const bool synced = !m_playback->lyrics().isEmpty();
+    m_lyricList->setWordWrap(true);
+    m_lyricList->setSelectionMode(synced ? QAbstractItemView::SingleSelection : QAbstractItemView::NoSelection);
+    m_lyricInfo->setText(m_playback->lyricSource().isEmpty() ? QString() : m_playback->lyricSource() + (synced ? " · 同步歌词" : " · 纯文本，无时间戳"));
     for (const auto &line : m_playback->lyrics()) {
         auto *item = new QListWidgetItem(line.text, m_lyricList); item->setTextAlignment(Qt::AlignCenter); item->setToolTip(line.text);
     }
-    if (m_playback->lyrics().isEmpty()) {
+    if (!synced && !m_playback->plainLyrics().isEmpty()) {
+        for (const auto &line : m_playback->plainLyrics().split('\n')) {
+            auto *item = new QListWidgetItem(line, m_lyricList); item->setTextAlignment(Qt::AlignCenter);
+            item->setToolTip(line); item->setFlags(Qt::ItemIsEnabled);
+        }
+    } else if (!synced) {
         auto *item = new QListWidgetItem("暂无歌词", m_lyricList); item->setTextAlignment(Qt::AlignCenter); item->setFlags(Qt::NoItemFlags);
     }
 }
@@ -345,9 +374,10 @@ void MainWindow::refreshChat() {
             auto *card = new QFrame; card->setObjectName("songCard"); auto *cardLayout = new QHBoxLayout(card); cardLayout->setContentsMargins(12, 12, 12, 12); cardLayout->setSpacing(10);
             auto *cover = new CoverWidget; cover->setFixedSize(54, 54); cover->setMinimumSize(54, 54); cardLayout->addWidget(cover);
             auto *info = new QVBoxLayout; info->setSpacing(4); auto *title = label(song ? song->title : QFileInfo(message.songPath).completeBaseName()); title->setWordWrap(true); info->addWidget(title);
-            info->addWidget(label(song && !song->artist.isEmpty() ? song->artist : "本地歌曲", "small")); info->addWidget(label("歌曲分享 · 本机播放", "small")); cardLayout->addLayout(info, 1);
+            info->addWidget(label(song && !song->artist.isEmpty() ? song->artist : "本地歌曲", "small")); info->addWidget(label(song ? "歌曲分享 · 本机播放" : "已从音乐库移除", "small")); cardLayout->addLayout(info, 1);
             auto *play = iconButton("play", "播放分享的本地歌曲"); play->setObjectName("songCardPlay"); play->setIcon(musicIcon("play", red)); cardLayout->addWidget(play);
             const auto path = message.songPath; connect(play, &QToolButton::clicked, this, [this, path] { m_playback->playSong(path); }); columnLayout->addWidget(card);
+            play->setEnabled(song != nullptr);
         }
         column->setMaximumWidth(420);
         if (message.outgoing) { rowLayout->addStretch(1); rowLayout->addWidget(column, 4); rowLayout->addWidget(avatar, 0, Qt::AlignTop); }
@@ -369,6 +399,9 @@ void MainWindow::sendMessage() {
     if (m_input->text().trimmed().isEmpty()) return;
     m_chat->sendText(m_input->text()); m_input->clear(); m_input->setFocus();
     QTimer::singleShot(0, this, [this] { m_messages->verticalScrollBar()->setValue(m_messages->verticalScrollBar()->maximum()); });
+}
+void MainWindow::removeMusic(const QString &path) {
+    if (m_library->removeSong(path)) notify("已从音乐库移除，磁盘上的歌曲文件仍然保留。");
 }
 void MainWindow::notify(const QString &message) {
     m_notice->setText(message); m_notice->parentWidget()->show();

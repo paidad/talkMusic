@@ -13,6 +13,13 @@
 #include <QSettings>
 #include <QLabel>
 #include <QFontDatabase>
+#include <QCryptographicHash>
+#include <wavfile.h>
+#include <id3v2tag.h>
+#include <unsynchronizedlyricsframe.h>
+#include <synchronizedlyricsframe.h>
+#include <fileref.h>
+#include <tpropertymap.h>
 #include <cmath>
 #include "musiclibrary.h"
 #include "playbackcontroller.h"
@@ -30,6 +37,37 @@ static QString writeWave(const QString &directory, const QString &name, int seco
     out.writeRawData("data", 4); out << size;
     for (quint32 i = 0; i < size / 2; ++i) out << qint16(std::sin(i * 6.2831853 * 220 / 8000) * 1000);
     return path;
+}
+
+static bool addEmbeddedLyrics(const QString &path, const QString &text, bool synced = false, TagLib::String::Type encoding = TagLib::String::UTF8) {
+#ifdef Q_OS_WIN
+    const auto filename = QDir::toNativeSeparators(path).toStdWString();
+#else
+    const auto filename = QFile::encodeName(path).toStdString();
+#endif
+    TagLib::RIFF::WAV::File file(filename.c_str(), false);
+    if (!file.isValid()) return false;
+    file.ID3v2Tag()->removeFrames("USLT"); file.ID3v2Tag()->removeFrames("SYLT");
+    const auto utf8 = text.toUtf8();
+    if (synced) {
+        auto *frame = new TagLib::ID3v2::SynchronizedLyricsFrame(encoding);
+        frame->setType(TagLib::ID3v2::SynchronizedLyricsFrame::Lyrics);
+        frame->setTimestampFormat(TagLib::ID3v2::SynchronizedLyricsFrame::AbsoluteMilliseconds);
+        TagLib::ID3v2::SynchronizedLyricsFrame::SynchedTextList entries;
+        entries.append({0, TagLib::String(utf8.constData(), TagLib::String::UTF8)});
+        entries.append({2000, TagLib::String("second line", TagLib::String::UTF8)});
+        frame->setSynchedText(entries); file.ID3v2Tag()->addFrame(frame);
+    } else {
+        auto *frame = new TagLib::ID3v2::UnsynchronizedLyricsFrame(encoding);
+        frame->setDescription("lyrics"); frame->setText(TagLib::String(utf8.constData(), TagLib::String::UTF8));
+        file.ID3v2Tag()->addFrame(frame);
+    }
+    return file.save();
+}
+
+static QByteArray fileHash(const QString &path) {
+    QFile file(path); if (!file.open(QIODevice::ReadOnly)) return {};
+    return QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
 }
 
 class TalkMusicTest : public QObject {
@@ -54,6 +92,68 @@ private slots:
         QCOMPARE(lines.size(), 3); QCOMPARE(lines[0].time, 100); QCOMPARE(lines[0].text, QString("第一句"));
         QCOMPARE(lines[1].time, 2400); QCOMPARE(lines[2].time, 3905);
         QVERIFY(parseLyrics("[ti:No timestamps]\njust words").isEmpty());
+    }
+    void embeddedLyricsAndPrecedence() {
+        const auto wave = writeWave(m_temp.path(), "内嵌歌词测试");
+        QVERIFY(addEmbeddedLyrics(wave, "第一句\n第二句", false, TagLib::String::UTF16));
+        const auto original = fileHash(wave);
+        auto result = readSongLyrics(wave);
+        QCOMPARE(result.plainText, QString("第一句\n第二句")); QVERIFY(result.timedLines.isEmpty()); QCOMPARE(result.source, QString("内嵌歌词"));
+        QCOMPARE(fileHash(wave), original);
+        QVERIFY(addEmbeddedLyrics(wave, "[00:00.00]内嵌第一句\n[00:02.00]内嵌第二句"));
+        result = readSongLyrics(wave); QCOMPARE(result.timedLines.size(), 2); QVERIFY(result.plainText.isEmpty());
+        QFile sidecar(m_temp.path() + "/内嵌歌词测试.lrc"); QVERIFY(sidecar.open(QIODevice::WriteOnly));
+        sidecar.write("[00:01.00]External first\n"); sidecar.close();
+        result = readSongLyrics(wave); QCOMPARE(result.source, QString("本地 LRC")); QCOMPARE(result.timedLines.first().text, QString("External first"));
+        QVERIFY(sidecar.open(QIODevice::WriteOnly | QIODevice::Truncate)); sidecar.write("[ti:metadata only]\n"); sidecar.close();
+        result = readSongLyrics(wave); QCOMPARE(result.source, QString("内嵌歌词"));
+        QVERIFY(QFile::remove(sidecar.fileName()));
+        QVERIFY(addEmbeddedLyrics(wave, "同步歌词", true));
+        result = readSongLyrics(wave); QCOMPARE(result.timedLines.size(), 2); QCOMPARE(result.timedLines[1].time, 2000);
+        QCOMPARE(result.timedLines.first().text, QString("同步歌词"));
+        const auto noLyrics = writeWave(m_temp.path(), "Without lyrics"); QVERIFY(readSongLyrics(noLyrics).empty());
+        QFile broken(m_temp.path() + "/bad-tags.mp3"); QVERIFY(broken.open(QIODevice::WriteOnly)); broken.write(QByteArray::fromHex("4944330400007f7f7f7f")); broken.close();
+        QVERIFY(readSongLyrics(broken.fileName()).empty());
+    }
+    void commonEmbeddedFormats() {
+        for (const auto &name : {"lame_cbr.mp3", "no-tags.flac", "no-tags.m4a", "test.ogg"}) {
+            const auto path = m_temp.path() + "/" + name;
+            QVERIFY(QFile::copy(QString(TAGLIB_FIXTURE_DIR) + "/" + name, path));
+            {
+#ifdef Q_OS_WIN
+                const auto filename = QDir::toNativeSeparators(path).toStdWString();
+#else
+                const auto filename = QFile::encodeName(path).toStdString();
+#endif
+                TagLib::FileRef file(filename.c_str(), false);
+                QVERIFY(!file.isNull());
+                auto properties = file.file()->properties();
+                properties.replace("LYRICS", TagLib::StringList(TagLib::String("[00:01.00]test embedded\n[00:03.00]second", TagLib::String::UTF8)));
+                file.file()->setProperties(properties); QVERIFY(file.save());
+            }
+            const auto original = fileHash(path);
+            const auto result = readSongLyrics(path);
+            QCOMPARE(result.timedLines.size(), 2); QCOMPARE(result.timedLines.first().text, QString("test embedded"));
+            QCOMPARE(fileHash(path), original);
+        }
+    }
+    void removalAndQueue() {
+        const auto a = writeWave(m_temp.path(), "Remove A"); const auto b = writeWave(m_temp.path(), "Remove B");
+        const auto storage = m_temp.path() + "/removal.json";
+        MusicLibrary library(nullptr, storage); library.importFiles({a, b});
+        const auto first = library.songs()[0].path; const auto second = library.songs()[1].path;
+        PlaybackController playback(&library); playback.setVolume(0); playback.playSong(first);
+        library.toggleFavorite(first);
+        QVERIFY(library.removeSong(second)); QCOMPARE(playback.currentPath(), first);
+        QVERIFY(QFile::exists(b)); QVERIFY(!library.find(second));
+        playback.next(); QCOMPARE(playback.currentPath(), first);
+        QVERIFY(library.removeSong(first)); QVERIFY(playback.currentPath().isEmpty());
+        QCOMPARE(playback.player()->playbackState(), QMediaPlayer::StoppedState);
+        QVERIFY(playback.lyrics().isEmpty()); QVERIFY(playback.plainLyrics().isEmpty());
+        QVERIFY(QFile::exists(a)); QVERIFY(!library.removeSong(first));
+        QTest::qWait(100); QVERIFY(library.songs().isEmpty());
+        MusicLibrary restored(nullptr, storage); QVERIFY(restored.songs().isEmpty());
+        QCOMPARE(library.importFiles({a}), 1); QVERIFY(!library.songs().first().favorite);
     }
     void libraryPersistence() {
         const auto wave = writeWave(m_temp.path(), "Library Song");
@@ -150,6 +250,33 @@ private slots:
         playback.seek(1900);
         QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), 5000);
         QCOMPARE(playback.currentPath(), library.songs()[1].path);
+    }
+    void interfaceEmbeddedAndRemoval() {
+        const auto a = writeWave(m_temp.path(), "界面内嵌歌词"); const auto b = writeWave(m_temp.path(), "列表移除测试");
+        QVERIFY(addEmbeddedLyrics(a, "没有时间戳的歌词\n第二行内嵌歌词"));
+        const auto storage = m_temp.path() + "/lyrics-ui.json";
+        { MusicLibrary library(nullptr, storage); library.importFiles({a, b}); }
+        MainWindow window(nullptr, storage); window.show();
+        auto *library = window.findChild<MusicLibrary *>(); QVERIFY(library);
+        auto *playback = window.findChild<PlaybackController *>(); QVERIFY(playback); playback->setVolume(0);
+        auto *songs = window.findChild<QListWidget *>("songList");
+        QTest::qWait(100);
+        QTest::mouseClick(songs->viewport(), Qt::LeftButton, Qt::NoModifier, songs->visualItemRect(songs->item(0)).center());
+        QTest::mouseDClick(songs->viewport(), Qt::LeftButton, Qt::NoModifier, songs->visualItemRect(songs->item(0)).center());
+        QTRY_COMPARE_WITH_TIMEOUT(playback->currentPath(), MusicLibrary::normalizedPath(a), 5000);
+        auto *lyrics = window.findChild<QListWidget *>("lyrics"); QCOMPARE(lyrics->count(), 2); QCOMPARE(lyrics->item(0)->text(), QString("没有时间戳的歌词"));
+        QVERIFY(window.findChild<QLabel *>("lyricSource")->text().contains("纯文本"));
+        window.findChild<QToolButton *>("shareButton")->click();
+        auto *removeSecond = songs->itemWidget(songs->item(1))->findChild<QToolButton *>("removeSongButton"); QVERIFY(removeSecond); removeSecond->click();
+        QTRY_COMPARE(library->songs().size(), 1); QCOMPARE(playback->currentPath(), MusicLibrary::normalizedPath(a)); QVERIFY(QFile::exists(b));
+        const auto output = qEnvironmentVariable("TALKMUSIC_SCREENSHOT_DIR");
+        if (!output.isEmpty()) { QTest::qWait(100); QVERIFY(window.grab().save(output + "/talkmusic-embedded.png")); }
+        auto *removeCurrent = songs->itemWidget(songs->item(0))->findChild<QToolButton *>("removeSongButton"); removeCurrent->click();
+        QTRY_VERIFY(library->songs().isEmpty()); QVERIFY(playback->currentPath().isEmpty()); QCOMPARE(lyrics->item(0)->text(), QString("暂无歌词"));
+        QVERIFY(QFile::exists(a)); QVERIFY(!window.findChild<QToolButton *>("songCardPlay")->isEnabled());
+        QCOMPARE(window.findChild<QLabel *>("bottomTitle")->text(), QString("尚未播放"));
+        // The same view remains usable after importing the removed song again.
+        QCOMPARE(library->importFiles({a}), 1); QVERIFY(window.findChild<QToolButton *>("songCardPlay")->isEnabled());
     }
     void interfaceAndScreenshots() {
         const auto song = writeWave(m_temp.path(), "午后 · 练习曲");

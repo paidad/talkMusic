@@ -82,6 +82,20 @@ void MusicLibrary::toggleFavorite(const QString &path) {
     }
 }
 
+bool MusicLibrary::removeSong(const QString &path) {
+    const auto *song = find(path);
+    if (!song) return false;
+    const auto storedPath = song->path;
+    for (int i = 0; i < m_songs.size(); ++i) {
+        if (m_songs[i].path != storedPath) continue;
+        m_songs.removeAt(i);
+        m_pending.removeAll(storedPath);
+        // An in-flight metadata probe may finish, but updateMetadata never adds songs.
+        save(); emit songRemoved(storedPath); emit changed(); return true;
+    }
+    return false;
+}
+
 void MusicLibrary::updateMetadata(const QString &path, const QString &title, const QString &artist) {
     for (auto &song : m_songs) if (song.path == path) {
         bool updated = false;

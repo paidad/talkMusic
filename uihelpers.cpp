@@ -42,6 +42,8 @@ QIcon musicIcon(const QString &name, const QColor &color) {
         painter.drawLine(18, 3, 21, 6); painter.drawLine(18, 9, 21, 6); painter.drawLine(18, 15, 21, 18); painter.drawLine(18, 21, 21, 18);
     } else if (name == "left" || name == "right") {
         painter.drawRoundedRect(QRectF(3, 4, 18, 16), 2, 2); const int x = name == "left" ? 9 : 15; painter.drawLine(x, 4, x, 20);
+    } else if (name == "remove") {
+        painter.drawLine(7, 7, 17, 17); painter.drawLine(17, 7, 7, 17);
     } else if (name == "import") {
         painter.drawLine(12, 3, 12, 15); painter.drawLine(8, 11, 12, 15); painter.drawLine(16, 11, 12, 15);
         path.moveTo(4, 15); path.lineTo(4, 20); path.lineTo(20, 20); path.lineTo(20, 15); painter.drawPath(path);

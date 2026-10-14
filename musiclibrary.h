@@ -20,10 +20,12 @@ public:
     const Song *find(const QString &path) const;
     int importFiles(const QStringList &paths);
     void toggleFavorite(const QString &path);
+    bool removeSong(const QString &path);
     void updateMetadata(const QString &path, const QString &title, const QString &artist);
     static QString normalizedPath(const QString &path);
 signals:
     void changed();
+    void songRemoved(const QString &path);
     void storageError(const QString &message);
 private:
     void save();

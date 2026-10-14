@@ -6,6 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Multimedia)
 
 qt_standard_project_setup()
+include(cmake/TagLib.cmake)
 
 qt_add_executable(talkMusic
     WIN32 MACOSX_BUNDLE
@@ -16,6 +17,7 @@ qt_add_executable(talkMusic
     playbackcontroller.cpp playbackcontroller.h
     demochat.cpp demochat.h
     uihelpers.cpp uihelpers.h
+    lyricsreader.cpp lyricsreader.h
 )
 
 target_link_libraries(talkMusic
@@ -23,6 +25,7 @@ target_link_libraries(talkMusic
         Qt::Core
         Qt::Widgets
         Qt::Multimedia
+        tag
 )
 
 if(MSVC)
@@ -39,9 +42,11 @@ if(BUILD_TESTING)
         playbackcontroller.cpp playbackcontroller.h
         demochat.cpp demochat.h
         uihelpers.cpp uihelpers.h
+        lyricsreader.cpp lyricsreader.h
     )
     target_include_directories(talkMusicTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-    target_link_libraries(talkMusicTests PRIVATE Qt::Widgets Qt::Multimedia Qt::Test)
+    target_compile_definitions(talkMusicTests PRIVATE TAGLIB_FIXTURE_DIR="${TALKMUSIC_TAGLIB_SOURCE_DIR}/tests/data")
+    target_link_libraries(talkMusicTests PRIVATE Qt::Widgets Qt::Multimedia Qt::Test tag)
     if(MSVC)
         target_compile_options(talkMusicTests PRIVATE /utf-8)
     endif()

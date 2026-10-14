@@ -29,6 +29,7 @@ private:
     void refreshLyrics();
     void refreshChat();
     void importMusic();
+    void removeMusic(const QString &path);
     void sendMessage();
     void notify(const QString &message);
     void togglePanel(int index);
@@ -45,6 +46,7 @@ private:
     QLabel *m_elapsed;
     QLabel *m_duration;
     QLabel *m_notice;
+    QLabel *m_lyricInfo;
     QToolButton *m_favorite;
     QToolButton *m_share;
     QToolButton *m_play;

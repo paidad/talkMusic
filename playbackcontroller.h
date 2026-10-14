@@ -5,9 +5,7 @@
 #include <QVector>
 #include <QPixmap>
 #include "musiclibrary.h"
-
-struct LyricLine { qint64 time; QString text; };
-QVector<LyricLine> parseLyrics(const QString &text);
+#include "lyricsreader.h"
 
 class PlaybackController : public QObject {
     Q_OBJECT
@@ -17,6 +15,8 @@ public:
     QString currentPath() const { return m_current; }
     QMediaPlayer *player() const { return m_player; }
     const QVector<LyricLine> &lyrics() const { return m_lyrics; }
+    QString plainLyrics() const { return m_plainLyrics; }
+    QString lyricSource() const { return m_lyricSource; }
     int currentLyric() const { return m_lyricIndex; }
     Mode mode() const { return m_mode; }
     float volume() const { return m_audio->volume(); }
@@ -27,6 +27,7 @@ public:
     void seek(qint64 position);
     void setVolume(float volume);
     void cycleMode();
+    void clearCurrentSong();
 signals:
     void playbackStateChanged(QMediaPlayer::PlaybackState state);
     void positionChanged(qint64 position);
@@ -46,6 +47,8 @@ private:
     QAudioOutput *m_audio;
     QString m_current;
     QVector<LyricLine> m_lyrics;
+    QString m_plainLyrics;
+    QString m_lyricSource;
     int m_lyricIndex = -1;
     Mode m_mode = Sequential;
 };

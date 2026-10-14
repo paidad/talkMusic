@@ -1,40 +1,15 @@
 #include "playbackcontroller.h"
-#include <QFile>
 #include <QFileInfo>
-#include <QDir>
 #include <QMediaMetaData>
-#include <QRegularExpression>
 #include <QRandomGenerator>
-#include <algorithm>
-
-QVector<LyricLine> parseLyrics(const QString &text) {
-    QVector<LyricLine> lines;
-    const QRegularExpression stamp(R"(\[(\d+):(\d{1,2})(?:[.:](\d{1,3}))?\])");
-    const QRegularExpression offsetPattern(R"(\[offset:([+-]?\d+)\])", QRegularExpression::CaseInsensitiveOption);
-    const auto offsetMatch = offsetPattern.match(text);
-    const qint64 offset = offsetMatch.hasMatch() ? offsetMatch.captured(1).toLongLong() : 0;
-    for (const auto &line : text.split('\n')) {
-        auto matches = stamp.globalMatch(line);
-        QVector<qint64> times;
-        int end = 0;
-        while (matches.hasNext()) {
-            const auto match = matches.next();
-            if (match.captured(2).toInt() >= 60) continue;
-            const auto fraction = match.captured(3);
-            const auto millis = fraction.isEmpty() ? 0 : fraction.leftJustified(3, '0').toInt();
-            times.append(qMax<qint64>(0, (match.captured(1).toLongLong() * 60 + match.captured(2).toInt()) * 1000 + millis + offset));
-            end = match.capturedEnd();
-        }
-        const auto content = line.mid(end).trimmed();
-        if (!content.isEmpty()) for (const auto time : times) lines.append({time, content});
-    }
-    std::stable_sort(lines.begin(), lines.end(), [](const auto &a, const auto &b) { return a.time < b.time; });
-    return lines;
-}
+#include <QTimer>
 
 PlaybackController::PlaybackController(MusicLibrary *library, QObject *parent) : QObject(parent),
     m_library(library), m_player(nullptr), m_audio(new QAudioOutput(this)) {
     createPlayer();
+    connect(library, &MusicLibrary::songRemoved, this, [this](const QString &path) {
+        if (path == m_current) clearCurrentSong();
+    });
 }
 
 void PlaybackController::createPlayer() {
@@ -67,10 +42,9 @@ void PlaybackController::playSong(const QString &path) {
     if (!m_library->find(path)) { emit error(tr("此歌曲不在本地音乐库中，请先导入。")); return; }
     if (!QFileInfo(path).isFile()) { emit error(tr("音乐文件已移动或删除：%1").arg(QFileInfo(path).fileName())); return; }
     m_current = path;
-    m_lyrics.clear(); m_lyricIndex = -1;
-    const auto info = QFileInfo(path);
-    QFile file(info.dir().filePath(info.completeBaseName() + ".lrc"));
-    if (file.open(QIODevice::ReadOnly)) m_lyrics = parseLyrics(QString::fromUtf8(file.readAll()));
+    const auto songLyrics = readSongLyrics(path);
+    m_lyrics = songLyrics.timedLines; m_plainLyrics = songLyrics.plainText;
+    m_lyricSource = songLyrics.source; m_lyricIndex = -1;
     emit artworkChanged({});
     // Qt 6.7's FFmpeg backend can assert if setSource interrupts a pending load.
     // Dispose of that load together with its player, keeping audio settings intact.
@@ -81,6 +55,15 @@ void PlaybackController::playSong(const QString &path) {
     m_player->setSource(QUrl::fromLocalFile(path));
     emit currentSongChanged(); emit lyricChanged(-1);
     m_player->play();
+}
+
+void PlaybackController::clearCurrentSong() {
+    delete m_player;
+    createPlayer();
+    m_current.clear(); m_lyrics.clear(); m_plainLyrics.clear(); m_lyricSource.clear(); m_lyricIndex = -1;
+    emit playbackStateChanged(QMediaPlayer::StoppedState);
+    emit positionChanged(0); emit durationChanged(0); emit seekableChanged(false);
+    emit artworkChanged({}); emit currentSongChanged(); emit lyricChanged(-1);
 }
 
 void PlaybackController::refreshMetadata() {
