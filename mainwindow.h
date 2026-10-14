@@ -2,7 +2,6 @@
 #include <QMainWindow>
 #include "musiclibrary.h"
 #include "playbackcontroller.h"
-#include "demochat.h"
 
 class QLabel;
 class QLineEdit;
@@ -13,34 +12,51 @@ class QSplitter;
 class QToolButton;
 class QVBoxLayout;
 class CoverWidget;
+class NoteStore;
+class NoteEditor;
+class NoteNavigator;
+class TodoStore;
+class TodoWidget;
+class QStackedWidget;
+class QTabWidget;
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
     explicit MainWindow(QWidget *parent = nullptr, const QString &libraryPath = {});
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
 private:
     QWidget *createPlayingPanel();
-    QWidget *createChatPanel();
+    QWidget *createWorkspace();
     QWidget *createLibraryPanel();
     QWidget *createPlaybackBar();
     void refreshLibrary();
     void refreshCurrentSong();
     void refreshLyrics();
-    void refreshChat();
+    void refreshTodos();
+    void newTodoList();
+    void selectTodo(const QString &id);
+    void showTodoRecycle();
     void importMusic();
     void removeMusic(const QString &path);
-    void sendMessage();
     void notify(const QString &message);
     void togglePanel(int index);
+    void toggleFocus();
     MusicLibrary *m_library;
     PlaybackController *m_playback;
-    DemoChat *m_chat;
+    NoteStore *m_notes;
+    TodoStore *m_todos;
+    NoteEditor *m_noteEditor = nullptr;
+    NoteNavigator *m_noteNavigator;
+    TodoWidget *m_todoWidget;
+    QStackedWidget *m_workspace;
+    QTabWidget *m_sidebarTabs;
+    QListWidget *m_todoList;
     QSplitter *m_splitter;
     CoverWidget *m_cover;
     QLabel *m_songTitle;
     QLabel *m_artist;
-    QLabel *m_chatTitle;
     QLabel *m_bottomTitle;
     QLabel *m_bottomArtist;
     QLabel *m_elapsed;
@@ -54,13 +70,15 @@ private:
     QToolButton *m_leftToggle;
     QToolButton *m_rightToggle;
     QLineEdit *m_search;
-    QLineEdit *m_input;
     QListWidget *m_songList;
     QListWidget *m_lyricList;
-    QScrollArea *m_messages;
+    QToolButton *m_focusButton;
+    bool m_focus = false, m_restoreLeft = false, m_restoreRight = false;
+    QByteArray m_focusState;
+    int m_lastSidebarIndex = 0;
     QSlider *m_progress;
     QSlider *m_volume;
     bool m_favoritesOnly = false;
     int m_leftWidth = 280;
-    int m_rightWidth = 260;
+    int m_rightWidth = 290;
 };

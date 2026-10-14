@@ -23,7 +23,21 @@
 #include <cmath>
 #include "musiclibrary.h"
 #include "playbackcontroller.h"
-#include "demochat.h"
+#include "notestore.h"
+#include "noteeditor.h"
+#include "notenavigator.h"
+#include "markdownoutline.h"
+#include "todostore.h"
+#include "todowidget.h"
+#include <QPlainTextEdit>
+#include <QTextBrowser>
+#include <QTextBlock>
+#include <QStackedWidget>
+#include <QTreeWidget>
+#include <QCheckBox>
+#include <QSignalSpy>
+#include <QImage>
+#include <QProcess>
 #include "mainwindow.h"
 
 static QString writeWave(const QString &directory, const QString &name, int seconds = 12) {
@@ -82,6 +96,7 @@ private slots:
             QFontDatabase::addApplicationFont("C:/Windows/Fonts/msyh.ttc");
             QFontDatabase::addApplicationFont("C:/Windows/Fonts/msyhbd.ttc");
             QFontDatabase::addApplicationFont("C:/Windows/Fonts/segoeui.ttf");
+            QFontDatabase::addApplicationFont("C:/Windows/Fonts/consola.ttf");
         }
         QCoreApplication::setOrganizationName("TalkMusicTests"); QCoreApplication::setApplicationName("IsolatedTests");
         QSettings::setDefaultFormat(QSettings::IniFormat);
@@ -171,15 +186,6 @@ private slots:
         restored.updateMetadata(restored.songs().first().path, {}, {});
         QCOMPARE(restored.songs().first().title, QString("New title"));
     }
-    void conversations() {
-        DemoChat chat;
-        chat.sendText("   "); QCOMPARE(chat.messages().size(), 1);
-        chat.sendText(" hello "); QCOMPARE(chat.messages().last().text, QString("hello"));
-        chat.shareSong("local.wav"); QCOMPARE(chat.messages().last().songPath, QString("local.wav"));
-        chat.selectConversation("林间"); QCOMPARE(chat.messages().size(), 1);
-        chat.selectConversation("unknown"); QCOMPARE(chat.activeConversation(), QString("林间"));
-        chat.selectConversation("一起听 · 音乐客厅"); QCOMPARE(chat.messages().size(), 3);
-    }
     void importedMetadata() {
         const auto wave = writeWave(m_temp.path(), "Tagged Song");
         QFile file(wave); QVERIFY(file.open(QIODevice::ReadWrite));
@@ -251,79 +257,148 @@ private slots:
         QTRY_VERIFY_WITH_TIMEOUT(!changed.isEmpty(), 5000);
         QCOMPARE(playback.currentPath(), library.songs()[1].path);
     }
-    void interfaceEmbeddedAndRemoval() {
-        const auto a = writeWave(m_temp.path(), "界面内嵌歌词"); const auto b = writeWave(m_temp.path(), "列表移除测试");
-        QVERIFY(addEmbeddedLyrics(a, "没有时间戳的歌词\n第二行内嵌歌词"));
-        const auto storage = m_temp.path() + "/lyrics-ui.json";
-        { MusicLibrary library(nullptr, storage); library.importFiles({a, b}); }
-        MainWindow window(nullptr, storage); window.show();
-        auto *library = window.findChild<MusicLibrary *>(); QVERIFY(library);
-        auto *playback = window.findChild<PlaybackController *>(); QVERIFY(playback); playback->setVolume(0);
-        auto *songs = window.findChild<QListWidget *>("songList");
-        QTest::qWait(100);
-        QTest::mouseClick(songs->viewport(), Qt::LeftButton, Qt::NoModifier, songs->visualItemRect(songs->item(0)).center());
-        QTest::mouseDClick(songs->viewport(), Qt::LeftButton, Qt::NoModifier, songs->visualItemRect(songs->item(0)).center());
-        QTRY_COMPARE_WITH_TIMEOUT(playback->currentPath(), MusicLibrary::normalizedPath(a), 5000);
-        auto *lyrics = window.findChild<QListWidget *>("lyrics"); QCOMPARE(lyrics->count(), 2); QCOMPARE(lyrics->item(0)->text(), QString("没有时间戳的歌词"));
-        QVERIFY(window.findChild<QLabel *>("lyricSource")->text().contains("纯文本"));
-        window.findChild<QToolButton *>("shareButton")->click();
-        auto *removeSecond = songs->itemWidget(songs->item(1))->findChild<QToolButton *>("removeSongButton"); QVERIFY(removeSecond); removeSecond->click();
-        QTRY_COMPARE(library->songs().size(), 1); QCOMPARE(playback->currentPath(), MusicLibrary::normalizedPath(a)); QVERIFY(QFile::exists(b));
-        const auto output = qEnvironmentVariable("TALKMUSIC_SCREENSHOT_DIR");
-        if (!output.isEmpty()) { QTest::qWait(100); QVERIFY(window.grab().save(output + "/talkmusic-embedded.png")); }
-        auto *removeCurrent = songs->itemWidget(songs->item(0))->findChild<QToolButton *>("removeSongButton"); removeCurrent->click();
-        QTRY_VERIFY(library->songs().isEmpty()); QVERIFY(playback->currentPath().isEmpty()); QCOMPARE(lyrics->item(0)->text(), QString("暂无歌词"));
-        QVERIFY(QFile::exists(a)); QVERIFY(!window.findChild<QToolButton *>("songCardPlay")->isEnabled());
-        QCOMPARE(window.findChild<QLabel *>("bottomTitle")->text(), QString("尚未播放"));
-        // The same view remains usable after importing the removed song again.
-        QCOMPARE(library->importFiles({a}), 1); QVERIFY(window.findChild<QToolButton *>("songCardPlay")->isEnabled());
+    void outlineAndNotePersistence() {
+        const auto outline = markdownHeadings("# First\n\n```cpp\n# fake\n```\n\nSame\n----\n\n## Same\n    # indented\n~~~\n## hidden\n~~~\n");
+        QCOMPARE(outline.size(), 3); QCOMPARE(outline[1].sourceLine, 6); QCOMPARE(outline[2].sourceLine, 9);
+        const auto root = m_temp.path() + "/notes-store"; QVERIFY(QDir().mkpath(root));
+        NoteStore store; store.setRoot(root);
+        const auto folder = store.create(root, "学习", true); QVERIFY(!folder.isEmpty());
+        const auto note = store.create(folder, "第一篇"); QVERIFY(note.endsWith(".md"));
+        QVERIFY(!store.contains(m_temp.path() + "/outside.md")); QVERIFY(store.create(root, "../escape").isEmpty());
+        QVERIFY(store.create(root, "CON").isEmpty());
+        NoteDocument document(&store); QVERIFY(document.open(note));
+        document.setText("# 我的笔记\n\n原始 **Markdown**\n");
+        QTRY_VERIFY_WITH_TIMEOUT(!document.dirty(), 3000);
+        QFile file(note); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), document.text().toUtf8()); file.close();
+        const auto renamed = store.rename(note, "改名.md"); QVERIFY(!renamed.isEmpty()); document.relocate(renamed);
+        QVERIFY(document.save()); QCOMPARE(document.text(), QString("# 我的笔记\n\n原始 **Markdown**\n"));
+        // BOM and CRLF remain stable instead of reserializing rendered Markdown.
+        const auto windowsNote = store.create(root, "windows.md"); QFile windowsFile(windowsNote); QVERIFY(windowsFile.open(QIODevice::WriteOnly));
+        windowsFile.write(QByteArray("\xef\xbb\xbf") + "# Windows\r\n"); windowsFile.close();
+        NoteDocument windowsDocument(&store); QVERIFY(windowsDocument.open(windowsNote)); windowsDocument.setText("# Windows\nnext\n"); QVERIFY(windowsDocument.save());
+        QVERIFY(windowsFile.open(QIODevice::ReadOnly)); QCOMPARE(windowsFile.readAll(), QByteArray("\xef\xbb\xbf") + "# Windows\r\nnext\r\n");
+    }
+    void noteConflictsAndFailures() {
+        const auto root = m_temp.path() + "/conflicts"; QVERIFY(QDir().mkpath(root)); NoteStore store; store.setRoot(root);
+        const auto path = store.create(root, "conflict.md"); NoteDocument document(&store); QVERIFY(document.open(path));
+        document.setText("local draft");
+        QFile file(path); QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate)); file.write("disk edit"); file.close();
+        document.checkDisk(); QVERIFY(document.conflict()); QVERIFY(!document.save()); QCOMPARE(document.text(), QString("local draft"));
+        QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), QByteArray("disk edit")); file.close();
+        QVERIFY(document.reload()); QCOMPARE(document.text(), QString("disk edit")); QVERIFY(!document.conflict());
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate)); file.write("clean external"); file.close(); document.checkDisk();
+        QCOMPARE(document.text(), QString("clean external"));
+        document.setText("keep this"); QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate)); file.write("other"); file.close(); document.checkDisk();
+        QVERIFY(document.overwrite()); QVERIFY(file.open(QIODevice::ReadOnly)); QCOMPARE(file.readAll(), QByteArray("keep this")); file.close();
+        document.setText("save elsewhere"); QVERIFY(QFile::remove(path)); document.checkDisk(); QVERIFY(document.conflict());
+        const auto copy = QDir(root).filePath("copy.md"); QVERIFY(document.saveAs(copy)); QCOMPARE(document.path(), copy);
+        document.setText("do not lose this"); QVERIFY(QFile::remove(copy)); QVERIFY(QDir().mkdir(copy));
+        document.checkDisk(); QVERIFY(!document.overwrite()); QCOMPARE(document.text(), QString("do not lose this")); QVERIFY(document.dirty());
+    }
+    void todosPersistenceRecycleAndUndo() {
+        const auto directory = m_temp.path() + "/todos-model"; TodoStore store(nullptr, directory);
+        const auto id = store.createList("本周计划"); QVERIFY(!id.isEmpty());
+        QVERIFY(store.addTask(id, "第一项", "备注")); QVERIFY(store.addTask(id, "第二项"));
+        const auto first = store.find(id)->tasks[0].id; const auto second = store.find(id)->tasks[1].id;
+        QVERIFY(store.completeTask(id, first, true)); QVERIFY(store.editTask(id, second, "修改标题", "新的备注"));
+        QVERIFY(store.removeTask(id, first)); QVERIFY(store.canUndo(id)); QVERIFY(store.undoRemoval(id));
+        QCOMPARE(store.find(id)->tasks.first().id, first); QVERIFY(store.find(id)->tasks.first().completed);
+        QVERIFY(store.renameList(id, "新的计划"));
+        { TodoStore restored(nullptr, directory); QCOMPARE(restored.find(id)->tasks[1].notes, QString("新的备注")); QCOMPARE(restored.find(id)->title, QString("新的计划")); }
+        QVERIFY(store.trashList(id)); QVERIFY(!store.find(id)); QCOMPARE(store.recycled().size(), 1);
+        QVERIFY(store.restoreList(id)); QCOMPARE(store.find(id)->tasks[1].id, second);
+        QFile damaged(directory + "/" + id + ".todo.json"); QVERIFY(damaged.open(QIODevice::WriteOnly | QIODevice::Truncate)); damaged.write("{broken"); damaged.close();
+        QVERIFY(!store.addTask(id, "must not overwrite")); QVERIFY(damaged.open(QIODevice::ReadOnly)); QCOMPARE(damaged.readAll(), QByteArray("{broken")); damaged.close();
+        TodoStore corrupted(nullptr, directory); QVERIFY(corrupted.lists().isEmpty());
+        const auto blocked = m_temp.path() + "/blocked-todos"; QFile blocker(blocked); QVERIFY(blocker.open(QIODevice::WriteOnly)); blocker.write("keep"); blocker.close();
+        TodoStore unavailable(nullptr, blocked); QVERIFY(unavailable.createList("cannot write").isEmpty()); QVERIFY(unavailable.lists().isEmpty());
+    }
+    void noteNavigationAndLinks() {
+        QSettings().clear(); const auto root = m_temp.path() + "/navigation"; const auto outside = m_temp.path() + "/outside-notes";
+        QVERIFY(QDir().mkpath(root)); QVERIFY(QDir().mkpath(outside)); NoteStore store; store.setRoot(root);
+        const auto folder = store.create(root, "folder", true); const auto a = store.create(folder, "match.md"); store.create(root, "other.md");
+#ifdef Q_OS_WIN
+        QProcess process; process.start("cmd.exe", {"/c", "mklink", "/J", QDir::toNativeSeparators(root + "/linked"), QDir::toNativeSeparators(outside)});
+        QVERIFY(process.waitForFinished()); QCOMPARE(process.exitCode(), 0); QVERIFY(QFileInfo(root + "/linked").isJunction());
+        QVERIFY(!store.contains(root + "/linked/unsafe.md"));
+#endif
+        NoteEditor editor(&store); NoteNavigator navigator(&store, &editor); navigator.show(); navigator.refresh();
+        auto *tree = navigator.findChild<QTreeWidget *>("noteFileTree");
+        QTreeWidgetItemIterator it(tree); bool hasLink = false; while (*it) { if ((*it)->text(0) == "linked") hasLink = true; ++it; } QVERIFY(!hasLink);
+        navigator.findChild<QLineEdit *>("noteSearch")->setText("match"); QCOMPARE(tree->topLevelItemCount(), 1); QCOMPARE(tree->topLevelItem(0)->childCount(), 1);
+        tree->setCurrentItem(tree->topLevelItem(0)->child(0)); QCOMPARE(editor.activePath(), a);
+        const auto renamed = store.rename(folder, "renamed"); QCOMPARE(editor.activePath(), renamed + "/match.md"); QVERIFY(editor.flushAll());
+        store.setRoot(root + "/missing"); QVERIFY(!store.available()); QCOMPARE(store.root(), root + "/missing");
+#ifdef Q_OS_WIN
+        // Remove only the junction created by this test; its target stays untouched.
+        QVERIFY(QDir().rmdir(root + "/linked")); QVERIFY(QFileInfo(outside).isDir());
+#endif
+    }
+    void noteConflictBlocksWindowClose() {
+        QSettings().clear(); const auto root = m_temp.path() + "/close-guard"; QVERIFY(QDir().mkpath(root));
+        QFile file(root + "/active.md"); QVERIFY(file.open(QIODevice::WriteOnly)); file.write("original"); file.close();
+        QSettings().setValue("notes/root", root); QSettings().setValue("notes/lastFile", file.fileName());
+        MainWindow window(nullptr, m_temp.path() + "/close-guard-library.json"); window.show();
+        auto *editor = window.findChild<NoteEditor *>(); editor->activeEditor()->insertPlainText("local draft");
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate)); file.write("external version"); file.close();
+        QVERIFY(!window.close()); QVERIFY(window.isVisible()); QVERIFY(editor->findChild<QWidget *>("noteConflictBar")->isVisible());
+        editor->findChild<QPushButton *>("reloadNote")->click(); QCOMPARE(editor->activeEditor()->toPlainText(), QString("external version"));
+        QVERIFY(window.close());
+    }
+    void noteEditorSwitchingAndOutline() {
+        QSettings().clear(); const auto root = m_temp.path() + "/editor"; QVERIFY(QDir().mkpath(root)); NoteStore store; store.setRoot(root);
+        const auto a = store.create(root, "A"); const auto b = store.create(root, "B");
+        NoteEditor editor(&store); editor.resize(850, 650); editor.show(); QVERIFY(editor.openFile(a));
+        editor.activeEditor()->insertPlainText("# Same\n\ntext\n\n# Same\nsecond\n"); QVERIFY(editor.flushAll());
+        auto *firstEditor = editor.activeEditor(); firstEditor->moveCursor(QTextCursor::End); firstEditor->insertPlainText("extra");
+        QVERIFY(editor.openFile(b)); QVERIFY(editor.openFile(a)); QCOMPARE(editor.activeEditor(), firstEditor); QVERIFY(firstEditor->document()->isUndoAvailable());
+        editor.setMode(1); editor.jumpToHeading(4); QCOMPARE(firstEditor->textCursor().blockNumber(), 4);
+        auto *preview = firstEditor->parentWidget()->findChild<QTextBrowser *>(); QVERIFY(preview); QCOMPARE(preview->textCursor().block().text(), QString("Same"));
+        editor.setMode(2); QCOMPARE(editor.mode(), 2); editor.resize(600, 650); QTest::qWait(50); QVERIFY(!editor.findChild<QPushButton *>("noteMode2")->isEnabled());
+        // Relative images are resolved from the document directory; remote images stay unloaded.
+        QImage image(12, 12, QImage::Format_RGB32); image.fill(Qt::red); QVERIFY(image.save(root + "/local.png"));
+        firstEditor->insertPlainText("\n![local](local.png)\n![remote](https://example.invalid/image.png)\n"); QTest::qWait(300);
+        const auto resource = preview->document()->resource(QTextDocument::ImageResource, QUrl("local.png")); QVERIFY(!resource.value<QImage>().isNull());
+        QVERIFY(preview->document()->resource(QTextDocument::ImageResource, QUrl("https://example.invalid/image.png")).isNull());
+        QVERIFY(editor.flushAll());
     }
     void interfaceAndScreenshots() {
-        const auto song = writeWave(m_temp.path(), "午后 · 练习曲");
-        const auto second = writeWave(m_temp.path(), "雨落在窗边");
-        QFile lyricsFile(m_temp.path() + "/午后 · 练习曲.lrc"); QVERIFY(lyricsFile.open(QIODevice::WriteOnly));
-        lyricsFile.write(QString("[00:00.00]把喜欢的歌，听给你\n[00:02.00]让旋律停在这个午后\n[00:04.00]也让心情慢慢靠近\n[00:06.00]听见此刻，也听见彼此\n").toUtf8()); lyricsFile.close();
-        const auto storage = m_temp.path() + "/ui.json";
-        { MusicLibrary library(nullptr, storage); library.importFiles({song, second}); }
-        MainWindow window(nullptr, storage); window.show();
-        QTest::qWait(100);
-        auto *songs = window.findChild<QListWidget *>("songList"); QVERIFY(songs); QCOMPARE(songs->count(), 2);
-        auto *search = window.findChild<QLineEdit *>("musicSearch"); search->setText("午后"); QCOMPARE(songs->count(), 1); search->clear();
+        QSettings().clear(); const auto root = m_temp.path() + "/workspace-notes"; QVERIFY(QDir().mkpath(root + "/学习"));
+        const auto note = root + "/学习/Qt 学习笔记.md"; QFile file(note); QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write(QString("# 音乐陪伴下的学习时光\n\n让思绪安静下来，记下今天的新发现。\n\n## 今天的收获\n\n- 保留原始 Markdown\n- 文件夹与大纲各司其职\n- 写作时，音乐继续播放\n\n```cpp\n// 把灵感留在这里\nauto today = QStringLiteral(\"从容一点\");\n```\n\n## 接下来\n\n> 一份笔记，一段旋律，一个清晰的开始。\n").toUtf8()); file.close();
+        QSettings().setValue("notes/root", root); QSettings().setValue("notes/lastFile", note);
+        const auto song = writeWave(m_temp.path(), "午后练习曲"); const auto storage = m_temp.path() + "/new-ui.json";
+        { MusicLibrary library(nullptr, storage); library.importFiles({song}); }
+        MainWindow window(nullptr, storage); window.show(); QTest::qWait(100);
+        auto *tabs = window.findChild<QTabWidget *>("libraryTabs"); QCOMPARE(tabs->count(), 3); QCOMPARE(tabs->tabText(1), QString("笔记")); QCOMPARE(tabs->tabText(2), QString("待办"));
+        QVERIFY(!window.findChild<QListWidget *>("friendList"));
+        auto *editor = window.findChild<NoteEditor *>(); QCOMPARE(editor->activePath(), note); editor->setMode(1);
         auto *volume = window.findChild<QSlider *>("volumeSlider"); volume->setValue(0);
-        auto *play = window.findChild<QToolButton *>("playButton"); play->click();
-        QTRY_COMPARE_WITH_TIMEOUT(play->toolTip(), QString("暂停"), 10000);
-        window.findChild<QToolButton *>("favoriteButton")->click();
-        window.findChild<QPushButton *>("favoritesFilter")->click(); QCOMPARE(songs->count(), 1);
-        window.findChild<QToolButton *>("shareButton")->click();
-        QVERIFY(window.findChild<QToolButton *>("songCardPlay"));
-        auto *input = window.findChild<QLineEdit *>("messageInput"); input->setText("这首歌很适合一个安静的下午。");
-        window.findChild<QPushButton *>("sendMessage")->click(); QVERIFY(input->text().isEmpty());
-        bool messageFound = false;
-        for (auto *item : window.findChildren<QLabel *>()) if (item->text() == "这首歌很适合一个安静的下午。") messageFound = true;
-        QVERIFY(messageFound);
-        auto *tabs = window.findChild<QTabWidget *>("libraryTabs"); tabs->setCurrentIndex(1);
-        auto *friends = window.findChild<QListWidget *>("friendList"); friends->setCurrentRow(1);
-        QVERIFY(!window.findChild<QToolButton *>("songCardPlay"));
-        friends->setCurrentRow(0); QVERIFY(window.findChild<QToolButton *>("songCardPlay"));
-        tabs->setCurrentIndex(0);
-        QCOMPARE(play->toolTip(), QString("暂停")); // Switching pages does not interrupt music.
-        QTest::qWait(200);
+        auto *play = window.findChild<QToolButton *>("playButton"); play->click(); QTRY_COMPARE_WITH_TIMEOUT(play->toolTip(), QString("暂停"), 10000);
+        window.findChild<QToolButton *>("favoriteButton")->click(); window.findChild<QToolButton *>("insertSongButton")->click(); QVERIFY(editor->activeEditor()->toPlainText().contains("午后练习曲"));
+        tabs->setCurrentIndex(0); QCOMPARE(window.findChild<QStackedWidget *>("workspaceStack")->currentWidget(), editor);
+        tabs->setCurrentIndex(1); QCOMPARE(play->toolTip(), QString("暂停"));
         const auto output = qEnvironmentVariable("TALKMUSIC_SCREENSHOT_DIR");
-        if (!output.isEmpty()) { QDir().mkpath(output); QVERIFY(window.grab().save(output + "/talkmusic-1280.png")); }
-        window.resize(960, 640); QTest::qWait(100);
-        auto *splitter = window.findChild<QSplitter *>("mainSplitter"); QVERIFY(splitter->widget(1)->width() >= 350);
-        QVERIFY(window.findChild<QFrame *>("playbackBar")->height() == 80);
-        if (!output.isEmpty()) QVERIFY(window.grab().save(output + "/talkmusic-960.png"));
-        window.findChild<QToolButton *>("toggleLeft")->click(); QVERIFY(splitter->widget(0)->isHidden());
-        window.findChild<QToolButton *>("toggleRight")->click(); QVERIFY(splitter->widget(2)->isHidden());
-        window.findChild<QToolButton *>("toggleLeft")->click(); QVERIFY(!splitter->widget(0)->isHidden());
-        window.findChild<QPushButton *>("listenTogether")->click(); QVERIFY(window.findChild<QWidget *>("noticeBar")->isVisible());
-        volume->setValue(27); window.close();
-        MainWindow restored(nullptr, storage);
-        QCOMPARE(restored.findChild<QSlider *>("volumeSlider")->value(), 27);
-        QVERIFY(restored.findChild<QSplitter *>("mainSplitter")->widget(2)->isHidden());
+        if (!output.isEmpty()) { QDir().mkpath(output); QTest::qWait(300); QVERIFY(window.grab().save(output + "/talkmusic-notes.png")); }
+        auto *store = window.findChild<TodoStore *>(); const auto id = store->createList("本周的小目标"); QVERIFY(store->addTask(id, "完成 Qt 笔记", "整理模型与视图的理解")); QVERIFY(store->addTask(id, "听一张喜欢的专辑"));
+        tabs->setCurrentIndex(2); auto *titles = window.findChild<QListWidget *>("todoListTitles"); titles->setCurrentRow(0); auto *todo = window.findChild<TodoWidget *>(); QCOMPARE(todo->activeId(), id);
+        auto *add = window.findChild<QLineEdit *>("newTaskTitle"); add->setText("休息十分钟"); window.findChild<QPushButton *>("addTask")->click(); QCOMPARE(store->find(id)->tasks.size(), 3);
+        auto *check = todo->findChild<QCheckBox *>("taskCheck"); QVERIFY(check); check->click(); QTRY_VERIFY(store->find(id)->tasks.first().completed);
+        auto *remove = todo->findChild<QPushButton *>("removeTask"); QVERIFY(remove); remove->click(); QTRY_VERIFY(store->canUndo(id));
+        window.findChild<QPushButton *>("undoTaskRemoval")->click(); QCOMPARE(store->find(id)->tasks.size(), 3);
+        if (!output.isEmpty()) { QTest::qWait(100); QVERIFY(window.grab().save(output + "/talkmusic-todos.png")); }
+        tabs->setCurrentIndex(0); QCOMPARE(window.findChild<QStackedWidget *>("workspaceStack")->currentWidget(), todo); QCOMPARE(play->toolTip(), QString("暂停"));
+        auto *splitter = window.findChild<QSplitter *>("mainSplitter"); const auto sizes = splitter->sizes();
+        window.findChild<QToolButton *>("focusMode")->click(); QVERIFY(splitter->widget(0)->isHidden()); QVERIFY(splitter->widget(2)->isHidden());
+        window.findChild<QToolButton *>("focusMode")->click(); QVERIFY(!splitter->widget(0)->isHidden()); QVERIFY(!splitter->widget(2)->isHidden()); QCOMPARE(splitter->sizes(), sizes);
+        window.resize(960, 640); QTest::qWait(100); QVERIFY(splitter->widget(1)->width() >= 350);
+        QVERIFY(window.findChild<QWidget *>("cover")->geometry().bottom() < window.findChild<QLabel *>("playingSongTitle")->geometry().top());
+        if (!output.isEmpty()) QVERIFY(window.grab().save(output + "/talkmusic-workspace-960.png"));
+        volume->setValue(27); window.close(); QVERIFY(!window.isVisible());
+        MainWindow restored(nullptr, storage); QCOMPARE(restored.findChild<QSlider *>("volumeSlider")->value(), 27); QCOMPARE(restored.findChild<NoteEditor *>()->activePath(), note); QCOMPARE(restored.findChild<TodoWidget *>()->activeId(), id);
         QCOMPARE(restored.findChild<QToolButton *>("playButton")->toolTip(), QString("播放"));
     }
+
 };
 QTEST_MAIN(TalkMusicTest)
 #include "tst_talkmusic.moc"

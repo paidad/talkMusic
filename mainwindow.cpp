@@ -1,5 +1,17 @@
 #include "mainwindow.h"
 #include "uihelpers.h"
+#include "notestore.h"
+#include "noteeditor.h"
+#include "notenavigator.h"
+#include "todostore.h"
+#include "todowidget.h"
+#include <QStackedWidget>
+#include <QInputDialog>
+#include <QMessageBox>
+#include <QSignalBlocker>
+#include <QDialog>
+#include <QDialogButtonBox>
+#include <QEvent>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QFileDialog>
@@ -37,8 +49,10 @@ QString clockText(qint64 millis) {
 }
 
 MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindow(parent), m_library(new MusicLibrary(this, libraryPath)),
-    m_playback(new PlaybackController(m_library, this)), m_chat(new DemoChat(this)) {
-    setWindowTitle("TalkMusic · 把喜欢的歌，听给你");
+    m_playback(new PlaybackController(m_library, this)), m_notes(new NoteStore(this)),
+    m_todos(new TodoStore(this, libraryPath.isEmpty() ? QString() : QFileInfo(libraryPath).absolutePath() + "/workspace/todos")) {
+    m_notes->setRoot(QSettings().value("notes/root").toString());
+    setWindowTitle("TalkMusic · 音乐、笔记与待办");
     setWindowIcon(musicIcon("music", red)); resize(1280, 800); setMinimumSize(960, 640);
     setStyleSheet(R"(
         QWidget { font-family: 'Microsoft YaHei UI', 'Microsoft YaHei', sans-serif; font-size: 13px; color: #34343e; }
@@ -48,7 +62,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
         QFrame#playbackBar { border-top: 1px solid #eeebea; }
         QWidget#playingPanel { background: #faf6f4; }
         QWidget#libraryPanel { background: #f7f7f8; }
-        QWidget#chatPanel, QScrollArea, QScrollArea > QWidget > QWidget { background: #fcfbf9; }
+        QWidget#workspacePanel, QScrollArea, QScrollArea > QWidget > QWidget { background: #fcfbf9; }
         QLabel { background: transparent; }
         QLabel[role='brand'] { font-size: 21px; font-weight: 700; letter-spacing: 1px; }
         QLabel[role='heading'] { font-size: 19px; font-weight: 600; }
@@ -90,9 +104,12 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: none; }
         QSplitter::handle { background: #eee9e8; }
         QSplitter::handle:hover { background: #e9b4bd; }
-        QFrame[message='incoming'] { background: white; border: 1px solid #eee8e6; border-radius: 12px; }
-        QFrame[message='outgoing'] { background: #fbeaed; border: 1px solid #f6dce1; border-radius: 12px; }
-        QFrame#songCard { background: white; border: 1px solid #eee5e6; border-radius: 10px; }
+        QTreeWidget { background: transparent; border: none; outline: none; }
+        QTreeWidget::item { padding: 7px 2px; border-radius: 6px; }
+        QTreeWidget::item:selected { background: #fbeaed; color: #ce3d51; }
+        QTreeWidget::item:hover { background: #f0ebec; }
+        QFrame#taskCard { background: #ffffff; border: 1px solid #eee7e7; border-radius: 10px; }
+        QCheckBox::indicator { width: 17px; height: 17px; }
         QMenu { background: white; border: 1px solid #e8e4e4; padding: 6px; }
         QMenu::item { padding: 7px 18px; }
         QMenu::item:selected { background: #fbeaed; color: #ce3d51; }
@@ -104,9 +121,10 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
     auto *logo = label({}); logo->setPixmap(musicIcon("music", red).pixmap(26, 26)); logo->setFixedSize(26, 30);
     top->addWidget(logo); top->addWidget(label("TalkMusic", "brand")); top->addSpacing(12);
     top->addWidget(label("把喜欢的歌，听给你", "muted")); top->addStretch();
-    auto *badge = label("本地音乐 · 演示社交", "badge"); badge->setFixedHeight(28); top->addWidget(badge);
+    auto *badge = label("音乐 · 笔记 · 待办", "badge"); badge->setFixedHeight(28); top->addWidget(badge);
     m_leftToggle = iconButton("left", "折叠 / 展开正在播放"); m_leftToggle->setObjectName("toggleLeft");
-    m_rightToggle = iconButton("right", "折叠 / 展开音乐与好友"); m_rightToggle->setObjectName("toggleRight");
+    m_rightToggle = iconButton("right", "折叠 / 展开导航"); m_rightToggle->setObjectName("toggleRight");
+    m_focusButton = iconButton("focus", "专注模式"); m_focusButton->setObjectName("focusMode"); top->addWidget(m_focusButton);
     top->addWidget(m_leftToggle); top->addWidget(m_rightToggle); layout->addWidget(header);
     auto *noticeBar = new QWidget; noticeBar->setObjectName("noticeBar");
     auto *noticeLayout = new QHBoxLayout(noticeBar); noticeLayout->setContentsMargins(0, 0, 8, 0);
@@ -115,12 +133,12 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
     connect(dismiss, &QPushButton::clicked, noticeBar, &QWidget::hide);
     noticeBar->hide(); layout->addWidget(noticeBar);
     m_splitter = new QSplitter(Qt::Horizontal); m_splitter->setObjectName("mainSplitter"); m_splitter->setHandleWidth(1);
-    m_splitter->addWidget(createPlayingPanel()); m_splitter->addWidget(createChatPanel()); m_splitter->addWidget(createLibraryPanel());
+    m_splitter->addWidget(createPlayingPanel()); m_splitter->addWidget(createWorkspace()); m_splitter->addWidget(createLibraryPanel());
     m_splitter->setChildrenCollapsible(false); m_splitter->setStretchFactor(0, 0); m_splitter->setStretchFactor(1, 1); m_splitter->setStretchFactor(2, 0);
     layout->addWidget(m_splitter, 1); layout->addWidget(createPlaybackBar());
     connect(m_leftToggle, &QToolButton::clicked, this, [this] { togglePanel(0); });
     connect(m_rightToggle, &QToolButton::clicked, this, [this] { togglePanel(2); });
-    connect(m_library, &MusicLibrary::changed, this, [this] { refreshLibrary(); refreshCurrentSong(); refreshChat(); });
+    connect(m_library, &MusicLibrary::changed, this, [this] { refreshLibrary(); refreshCurrentSong(); });
     connect(m_library, &MusicLibrary::storageError, this, &MainWindow::notify);
     connect(m_playback, &PlaybackController::error, this, &MainWindow::notify);
     connect(m_playback, &PlaybackController::currentSongChanged, this, [this] { refreshCurrentSong(); refreshLyrics(); refreshLibrary(); });
@@ -129,7 +147,13 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
         m_lyricList->setCurrentRow(index);
         if (index >= 0) m_lyricList->scrollToItem(m_lyricList->item(index), QAbstractItemView::PositionAtCenter);
     });
-    connect(m_chat, &DemoChat::changed, this, &MainWindow::refreshChat);
+    connect(m_notes, &NoteStore::error, this, &MainWindow::notify);
+    connect(m_todos, &TodoStore::error, this, &MainWindow::notify);
+    connect(m_noteEditor, &NoteEditor::error, this, &MainWindow::notify);
+    connect(m_noteEditor, &NoteEditor::activeChanged, this, &MainWindow::refreshCurrentSong);
+    connect(m_todos, &TodoStore::changed, this, &MainWindow::refreshTodos);
+    connect(m_todoWidget, &TodoWidget::activeChanged, this, &MainWindow::refreshTodos);
+    connect(m_focusButton, &QToolButton::clicked, this, &MainWindow::toggleFocus);
     connect(m_playback, &PlaybackController::playbackStateChanged, this, [this](QMediaPlayer::PlaybackState state) {
         const bool playing = state == QMediaPlayer::PlayingState;
         m_play->setIcon(musicIcon(playing ? "pause" : "play", Qt::white));
@@ -144,11 +168,17 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
     QSettings settings;
     m_volume->setValue(qBound(0, settings.value("volume", 65).toInt(), 100));
     if (settings.contains("geometry")) restoreGeometry(settings.value("geometry").toByteArray());
-    m_splitter->setSizes({280, 738, 260});
-    if (settings.contains("splitter")) m_splitter->restoreState(settings.value("splitter").toByteArray());
+    m_splitter->setSizes({280, 708, 290});
+    if (settings.value("workspace/layoutVersion").toInt() == 2 && settings.contains("splitter")) m_splitter->restoreState(settings.value("splitter").toByteArray());
     if (settings.value("leftHidden", false).toBool()) togglePanel(0);
     if (settings.value("rightHidden", false).toBool()) togglePanel(2);
-    refreshLibrary(); refreshCurrentSong(); refreshLyrics(); refreshChat();
+    refreshLibrary(); refreshCurrentSong(); refreshLyrics(); refreshTodos();
+    const auto lastNote = settings.value("notes/lastFile").toString();
+    if (!lastNote.isEmpty() && m_notes->available()) m_noteEditor->openFile(lastNote);
+    const auto lastTodo = settings.value("todos/lastList").toString();
+    if (m_todos->find(lastTodo)) m_todoWidget->select(lastTodo);
+    if (settings.value("workspace/content", 0).toInt() == 1) m_workspace->setCurrentWidget(m_todoWidget);
+    m_sidebarTabs->setCurrentIndex(qBound(0, settings.value("workspace/tab", 1).toInt(), 2));
 }
 
 QWidget *MainWindow::createPlayingPanel() {
@@ -156,15 +186,16 @@ QWidget *MainWindow::createPlayingPanel() {
     auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(24, 25, 24, 18); layout->setSpacing(12);
     layout->addWidget(label("NOW PLAYING", "eyebrow"));
     m_cover = new CoverWidget; m_cover->setObjectName("cover"); m_cover->setFixedHeight(232); layout->addWidget(m_cover);
-    m_songTitle = label("让音乐开始", "songTitle"); m_songTitle->setWordWrap(true); m_songTitle->setMaximumHeight(65); layout->addWidget(m_songTitle);
-    m_artist = label("选择一首歌，开启今天的心情", "muted"); m_artist->setWordWrap(true); layout->addWidget(m_artist);
+    m_songTitle = new ElidedLabel("让音乐开始"); m_songTitle->setProperty("role", "songTitle"); m_songTitle->setObjectName("playingSongTitle"); layout->addWidget(m_songTitle);
+    m_artist = new ElidedLabel("选择一首歌，开启今天的心情"); m_artist->setProperty("role", "muted"); layout->addWidget(m_artist);
     auto *actions = new QHBoxLayout;
     m_favorite = iconButton("heart", "收藏当前歌曲"); m_favorite->setObjectName("favoriteButton");
-    m_share = iconButton("share", "分享到当前演示会话"); m_share->setObjectName("shareButton");
+    m_share = iconButton("share", "插入当前歌曲到笔记"); m_share->setObjectName("insertSongButton");
     actions->addWidget(m_favorite); actions->addWidget(m_share); actions->addStretch(); actions->addWidget(label("本地音源", "small")); layout->addLayout(actions);
     connect(m_favorite, &QToolButton::clicked, this, [this] { m_library->toggleFavorite(m_playback->currentPath()); });
-    connect(m_share, &QToolButton::clicked, this, [this] { m_chat->shareSong(m_playback->currentPath()); });
+    connect(m_share, &QToolButton::clicked, this, [this] { const auto *song = m_library->find(m_playback->currentPath()); if (song) m_noteEditor->insertSong(song->title, song->artist, song->path); });
     m_lyricList = new QListWidget; m_lyricList->setObjectName("lyrics"); m_lyricList->setFocusPolicy(Qt::NoFocus);
+    m_lyricList->setMinimumHeight(40);
     m_lyricList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); layout->addWidget(m_lyricList, 1);
     connect(m_lyricList, &QListWidget::itemClicked, this, [this](QListWidgetItem *item) {
         const int index = m_lyricList->row(item);
@@ -173,36 +204,23 @@ QWidget *MainWindow::createPlayingPanel() {
     m_lyricInfo = label({}, "small"); m_lyricInfo->setObjectName("lyricSource"); m_lyricInfo->setWordWrap(true);
     m_lyricInfo->setAlignment(Qt::AlignCenter); layout->addWidget(m_lyricInfo);
     layout->addWidget(label("听见此刻，也听见彼此。", "small"), 0, Qt::AlignHCenter);
+    panel->installEventFilter(this);
     return panel;
 }
 
-QWidget *MainWindow::createChatPanel() {
-    auto *panel = new QWidget; panel->setObjectName("chatPanel"); panel->setMinimumWidth(350);
-    auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(24, 24, 24, 20); layout->setSpacing(14);
-    auto *heading = new QHBoxLayout;
-    auto *titles = new QVBoxLayout; titles->setSpacing(5);
-    m_chatTitle = label({}, "heading"); titles->addWidget(m_chatTitle); titles->addWidget(label("分享旋律，让聊天多一点共鸣", "muted"));
-    heading->addLayout(titles, 1);
-    auto *listen = new QPushButton("一起听"); listen->setIcon(musicIcon("music", red)); listen->setObjectName("listenTogether"); heading->addWidget(listen);
-    connect(listen, &QPushButton::clicked, this, [this] { notify("一起听尚未接入服务端。当前音乐仅在本机播放，右侧好友和消息均为演示。"); });
-    layout->addLayout(heading);
-    auto *banner = label("演示会话 · 消息仅在本次运行保留，好友不会收到", "badge"); banner->setWordWrap(true); layout->addWidget(banner);
-    m_messages = new QScrollArea; m_messages->setObjectName("chatMessages"); m_messages->setFrameShape(QFrame::NoFrame); m_messages->setWidgetResizable(true);
-    m_messages->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); layout->addWidget(m_messages, 1);
-    auto *composer = new QHBoxLayout; composer->setSpacing(10);
-    m_input = new QLineEdit; m_input->setObjectName("messageInput"); m_input->setPlaceholderText("聊聊这首歌，或分享今天的心情…"); m_input->setMaxLength(2000); m_input->setMinimumWidth(0);
-    auto *send = new QPushButton("发送"); send->setObjectName("sendMessage"); send->setProperty("accent", true); send->setFixedWidth(64);
-    composer->addWidget(m_input, 1); composer->addWidget(send); layout->addLayout(composer);
-    layout->addWidget(label("Enter 发送  ·  左侧分享按钮可发送歌曲卡片", "small"));
-    connect(send, &QPushButton::clicked, this, &MainWindow::sendMessage);
-    connect(m_input, &QLineEdit::returnPressed, this, &MainWindow::sendMessage);
+QWidget *MainWindow::createWorkspace() {
+    auto *panel = new QWidget; panel->setObjectName("workspacePanel"); panel->setMinimumWidth(350);
+    auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(0, 0, 0, 0);
+    m_workspace = new QStackedWidget; m_workspace->setObjectName("workspaceStack");
+    m_noteEditor = new NoteEditor(m_notes); m_todoWidget = new TodoWidget(m_todos);
+    m_workspace->addWidget(m_noteEditor); m_workspace->addWidget(m_todoWidget); layout->addWidget(m_workspace);
     return panel;
 }
 
 QWidget *MainWindow::createLibraryPanel() {
-    auto *panel = new QWidget; panel->setObjectName("libraryPanel"); panel->setMinimumWidth(230);
+    auto *panel = new QWidget; panel->setObjectName("libraryPanel"); panel->setMinimumWidth(250);
     auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(14, 18, 14, 16);
-    auto *tabs = new QTabWidget; tabs->setObjectName("libraryTabs");
+    auto *tabs = new QTabWidget; m_sidebarTabs = tabs; tabs->setObjectName("libraryTabs");
     auto *music = new QWidget; auto *musicLayout = new QVBoxLayout(music); musicLayout->setContentsMargins(0, 16, 0, 0); musicLayout->setSpacing(12);
     m_search = new QLineEdit; m_search->setObjectName("musicSearch"); m_search->setPlaceholderText("搜索本地歌曲 / 歌手"); m_search->setClearButtonEnabled(true); musicLayout->addWidget(m_search);
     connect(m_search, &QLineEdit::textChanged, this, &MainWindow::refreshLibrary);
@@ -225,24 +243,29 @@ QWidget *MainWindow::createLibraryPanel() {
         auto *remove = menu.addAction(musicIcon("remove"), "从音乐库移除（保留文件）");
         if (menu.exec(m_songList->viewport()->mapToGlobal(position)) == remove) removeMusic(path);
     });
-    musicLayout->addWidget(label("双击播放 · 歌曲卡片共享本地文件", "small"));
+    musicLayout->addWidget(label("双击播放 · 移除只影响音乐库", "small"));
     tabs->addTab(music, "音乐");
-    auto *friends = new QWidget; auto *friendsLayout = new QVBoxLayout(friends); friendsLayout->setContentsMargins(0, 18, 0, 0); friendsLayout->setSpacing(12);
-    friendsLayout->addWidget(label("演示好友", "eyebrow"));
-    auto *friendList = new QListWidget; friendList->setObjectName("friendList");
-    for (const auto &name : m_chat->conversations()) {
-        auto *item = new QListWidgetItem(friendList); item->setData(Qt::UserRole, name); item->setSizeHint({180, 72});
-        auto *row = new QWidget; auto *rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(4, 6, 4, 6);
-        auto *avatar = label(name.startsWith("一起听") ? "♫" : name.left(1)); avatar->setFixedSize(38, 38); avatar->setAlignment(Qt::AlignCenter);
-        avatar->setStyleSheet("background: #ecdfdf; color: #a45e69; border-radius: 19px; font-size: 17px;"); rowLayout->addWidget(avatar);
-        auto *text = new QVBoxLayout; text->setSpacing(4); text->addWidget(label(name)); text->addWidget(label(name.startsWith("一起听") ? "音乐客厅 · 演示房间" : "演示在线 · 尚未连接", "small")); rowLayout->addLayout(text, 1);
-        friendList->setItemWidget(item, row);
-    }
-    friendList->setCurrentRow(0);
-    connect(friendList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) { if (item) m_chat->selectConversation(item->data(Qt::UserRole).toString()); });
-    friendsLayout->addWidget(friendList, 1);
-    auto *explanation = label("这是本地交互演示。好友状态为示例，歌曲只在你的电脑上播放。", "muted"); explanation->setWordWrap(true); friendsLayout->addWidget(explanation);
-    tabs->addTab(friends, "好友"); layout->addWidget(tabs); return panel;
+    m_noteNavigator = new NoteNavigator(m_notes, m_noteEditor); tabs->addTab(m_noteNavigator, "笔记");
+    auto *todos = new QWidget; auto *todoLayout = new QVBoxLayout(todos); todoLayout->setContentsMargins(0, 16, 0, 0); todoLayout->setSpacing(12);
+    auto *newList = new QPushButton("新建待办清单"); newList->setObjectName("newTodoList"); todoLayout->addWidget(newList);
+    connect(newList, &QPushButton::clicked, this, &MainWindow::newTodoList);
+    m_todoList = new QListWidget; m_todoList->setObjectName("todoListTitles"); m_todoList->setContextMenuPolicy(Qt::CustomContextMenu); todoLayout->addWidget(m_todoList, 1);
+    connect(m_todoList, &QListWidget::currentItemChanged, this, [this](QListWidgetItem *item) { if (item) selectTodo(item->data(Qt::UserRole).toString()); });
+    connect(m_todoList, &QWidget::customContextMenuRequested, this, [this](const QPoint &position) {
+        const auto *item = m_todoList->itemAt(position); if (!item) return; const auto id = item->data(Qt::UserRole).toString(); if (!m_todos->find(id)) return;
+        QMenu menu; auto *rename = menu.addAction("重命名清单"); auto *remove = menu.addAction("移入待办回收区"); const auto *chosen = menu.exec(m_todoList->viewport()->mapToGlobal(position));
+        if (chosen == rename) { bool ok; const auto title = QInputDialog::getText(this, "重命名清单", "名称", QLineEdit::Normal, m_todos->find(id)->title, &ok); if (ok) m_todos->renameList(id, title); }
+        else if (chosen == remove) m_todos->trashList(id);
+    });
+    auto *recycle = new QPushButton("待办回收区"); recycle->setObjectName("todoRecycle"); todoLayout->addWidget(recycle); connect(recycle, &QPushButton::clicked, this, &MainWindow::showTodoRecycle);
+    tabs->addTab(todos, "待办"); layout->addWidget(tabs);
+    connect(tabs, &QTabWidget::currentChanged, this, [this](int index) {
+        if (index != 0 && !m_noteEditor->flushAll()) { QSignalBlocker blocker(m_sidebarTabs); m_sidebarTabs->setCurrentIndex(m_lastSidebarIndex); m_workspace->setCurrentWidget(m_noteEditor); return; }
+        if (index == 1) m_workspace->setCurrentWidget(m_noteEditor);
+        if (index == 2) m_workspace->setCurrentWidget(m_todoWidget);
+        m_lastSidebarIndex = index;
+    });
+    return panel;
 }
 
 QWidget *MainWindow::createPlaybackBar() {
@@ -319,7 +342,7 @@ void MainWindow::refreshLibrary() {
 
 void MainWindow::refreshCurrentSong() {
     const auto *song = m_library->find(m_playback->currentPath());
-    m_favorite->setEnabled(song); m_share->setEnabled(song);
+    m_favorite->setEnabled(song); m_share->setEnabled(song && m_noteEditor && !m_noteEditor->activePath().isEmpty());
     if (!song) {
         m_songTitle->setText("让音乐开始"); m_songTitle->setToolTip({});
         m_artist->setText("选择一首歌，开启今天的心情");
@@ -353,40 +376,32 @@ void MainWindow::refreshLyrics() {
     }
 }
 
-void MainWindow::refreshChat() {
-    const bool nearBottom = m_messages->verticalScrollBar()->maximum() - m_messages->verticalScrollBar()->value() < 40;
-    const int previousScroll = m_messages->verticalScrollBar()->value();
-    m_chatTitle->setText(m_chat->activeConversation());
-    auto *container = new QWidget; auto *layout = new QVBoxLayout(container); layout->setContentsMargins(0, 10, 0, 10); layout->setSpacing(20);
-    auto *day = label("今天 · 一段从音乐开始的对话", "small"); day->setAlignment(Qt::AlignCenter); layout->addWidget(day);
-    for (const auto &message : m_chat->messages()) {
-        auto *row = new QWidget; auto *rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(0, 0, 0, 0); rowLayout->setSpacing(10);
-        auto *avatar = label(message.sender.left(1)); avatar->setFixedSize(32, 32); avatar->setAlignment(Qt::AlignCenter);
-        avatar->setStyleSheet(message.outgoing ? "background: #df4657; color: white; border-radius: 16px;" : "background: #e6dfd8; color: #897064; border-radius: 16px;");
-        auto *column = new QWidget; auto *columnLayout = new QVBoxLayout(column); columnLayout->setContentsMargins(0, 0, 0, 0); columnLayout->setSpacing(6);
-        auto *sender = label(message.sender + "  " + message.time.toString("HH:mm"), "small"); sender->setAlignment(message.outgoing ? Qt::AlignRight : Qt::AlignLeft); columnLayout->addWidget(sender);
-        if (message.songPath.isEmpty()) {
-            auto *bubble = new QFrame; bubble->setProperty("message", message.outgoing ? "outgoing" : "incoming");
-            auto *bubbleLayout = new QVBoxLayout(bubble); bubbleLayout->setContentsMargins(14, 11, 14, 11);
-            auto *text = label(message.text); text->setTextFormat(Qt::PlainText); text->setWordWrap(true); text->setTextInteractionFlags(Qt::TextSelectableByMouse); text->setMinimumWidth(0); bubbleLayout->addWidget(text); columnLayout->addWidget(bubble);
-        } else {
-            const auto *song = m_library->find(message.songPath);
-            auto *card = new QFrame; card->setObjectName("songCard"); auto *cardLayout = new QHBoxLayout(card); cardLayout->setContentsMargins(12, 12, 12, 12); cardLayout->setSpacing(10);
-            auto *cover = new CoverWidget; cover->setFixedSize(54, 54); cover->setMinimumSize(54, 54); cardLayout->addWidget(cover);
-            auto *info = new QVBoxLayout; info->setSpacing(4); auto *title = label(song ? song->title : QFileInfo(message.songPath).completeBaseName()); title->setWordWrap(true); info->addWidget(title);
-            info->addWidget(label(song && !song->artist.isEmpty() ? song->artist : "本地歌曲", "small")); info->addWidget(label(song ? "歌曲分享 · 本机播放" : "已从音乐库移除", "small")); cardLayout->addLayout(info, 1);
-            auto *play = iconButton("play", "播放分享的本地歌曲"); play->setObjectName("songCardPlay"); play->setIcon(musicIcon("play", red)); cardLayout->addWidget(play);
-            const auto path = message.songPath; connect(play, &QToolButton::clicked, this, [this, path] { m_playback->playSong(path); }); columnLayout->addWidget(card);
-            play->setEnabled(song != nullptr);
-        }
-        column->setMaximumWidth(420);
-        if (message.outgoing) { rowLayout->addStretch(1); rowLayout->addWidget(column, 4); rowLayout->addWidget(avatar, 0, Qt::AlignTop); }
-        else { rowLayout->addWidget(avatar, 0, Qt::AlignTop); rowLayout->addWidget(column, 4); rowLayout->addStretch(1); }
-        layout->addWidget(row);
+void MainWindow::refreshTodos() {
+    QSignalBlocker blocker(m_todoList); m_todoList->clear();
+    for (const auto &list : m_todos->lists()) {
+        int completed = 0; for (const auto &task : list.tasks) if (task.completed) ++completed;
+        auto *item = new QListWidgetItem(QString("%1\n%2 / %3 已完成").arg(list.title).arg(completed).arg(list.tasks.size()), m_todoList);
+        item->setData(Qt::UserRole, list.id); item->setSizeHint({180, 65}); item->setToolTip(list.title);
+        if (list.id == m_todoWidget->activeId()) m_todoList->setCurrentItem(item);
     }
-    layout->addStretch();
-    auto *old = m_messages->takeWidget(); delete old; m_messages->setWidget(container);
-    QTimer::singleShot(0, this, [this, nearBottom, previousScroll] { m_messages->verticalScrollBar()->setValue(nearBottom ? m_messages->verticalScrollBar()->maximum() : previousScroll); });
+    if (!m_todoList->count()) { auto *item = new QListWidgetItem("还没有待办清单\n点击上方按钮新建", m_todoList); item->setFlags(Qt::NoItemFlags); }
+}
+void MainWindow::selectTodo(const QString &id) {
+    if (!m_todos->find(id)) return;
+    if (!m_noteEditor->flushAll()) { m_workspace->setCurrentWidget(m_noteEditor); return; }
+    m_todoWidget->select(id); m_workspace->setCurrentWidget(m_todoWidget);
+}
+void MainWindow::newTodoList() {
+    bool ok; const auto title = QInputDialog::getText(this, "新建待办清单", "清单名称", QLineEdit::Normal, "今日计划", &ok);
+    if (ok) { const auto id = m_todos->createList(title); if (!id.isEmpty()) { selectTodo(id); refreshTodos(); } }
+}
+void MainWindow::showTodoRecycle() {
+    QDialog dialog(this); dialog.setWindowTitle("待办回收区"); dialog.resize(400, 360); auto *layout = new QVBoxLayout(&dialog); auto *list = new QListWidget; layout->addWidget(list, 1);
+    for (const auto &entry : m_todos->recycled()) { auto *item = new QListWidgetItem(entry.title, list); item->setData(Qt::UserRole, entry.id); }
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close); auto *restore = buttons->addButton("恢复选中清单", QDialogButtonBox::ActionRole); layout->addWidget(buttons);
+    connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    connect(restore, &QPushButton::clicked, &dialog, [this, list] { if (auto *item = list->currentItem()) { const auto id = item->data(Qt::UserRole).toString(); if (m_todos->restoreList(id)) delete item; } });
+    dialog.exec();
 }
 
 void MainWindow::importMusic() {
@@ -394,11 +409,6 @@ void MainWindow::importMusic() {
     if (files.isEmpty()) return;
     const int added = m_library->importFiles(files);
     notify(added ? QString("已导入 %1 首歌曲。双击右侧歌曲开始播放。").arg(added) : "没有新增歌曲：文件已存在或无法读取。");
-}
-void MainWindow::sendMessage() {
-    if (m_input->text().trimmed().isEmpty()) return;
-    m_chat->sendText(m_input->text()); m_input->clear(); m_input->setFocus();
-    QTimer::singleShot(0, this, [this] { m_messages->verticalScrollBar()->setValue(m_messages->verticalScrollBar()->maximum()); });
 }
 void MainWindow::removeMusic(const QString &path) {
     if (m_library->removeSong(path)) notify("已从音乐库移除，磁盘上的歌曲文件仍然保留。");
@@ -416,8 +426,28 @@ void MainWindow::togglePanel(int index) {
         panel->show(); sizes[index] = remembered; sizes[1] = qMax(350, m_splitter->width() - sizes[0] - sizes[2]); m_splitter->setSizes(sizes);
     } else { remembered = qMax(panel->minimumWidth(), sizes[index]); panel->hide(); }
 }
+void MainWindow::toggleFocus() {
+    if (!m_focus) {
+        m_focusState = m_splitter->saveState(); m_restoreLeft = m_splitter->widget(0)->isHidden(); m_restoreRight = m_splitter->widget(2)->isHidden();
+        m_splitter->widget(0)->hide(); m_splitter->widget(2)->hide(); m_focus = true;
+    } else {
+        m_splitter->widget(0)->setVisible(!m_restoreLeft); m_splitter->widget(2)->setVisible(!m_restoreRight); m_splitter->restoreState(m_focusState); m_focus = false;
+    }
+    m_leftToggle->setEnabled(!m_focus); m_rightToggle->setEnabled(!m_focus); m_focusButton->setToolTip(m_focus ? "退出专注模式" : "专注模式");
+}
+bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
+    if (watched->objectName() == "playingPanel" && event->type() == QEvent::Resize) {
+        const auto *panel = qobject_cast<QWidget *>(watched);
+        m_cover->setFixedHeight(qBound(130, panel->height() - 350, 232));
+        panel->layout()->setSpacing(panel->height() < 550 ? 8 : 12);
+    }
+    return QMainWindow::eventFilter(watched, event);
+}
 void MainWindow::closeEvent(QCloseEvent *event) {
-    QSettings settings; settings.setValue("geometry", saveGeometry()); settings.setValue("splitter", m_splitter->saveState());
-    settings.setValue("leftHidden", m_splitter->widget(0)->isHidden()); settings.setValue("rightHidden", m_splitter->widget(2)->isHidden()); settings.setValue("volume", m_volume->value());
+    if (!m_noteEditor->flushAll()) { m_workspace->setCurrentWidget(m_noteEditor); event->ignore(); return; }
+    QSettings settings; settings.setValue("geometry", saveGeometry()); settings.setValue("splitter", m_focus ? m_focusState : m_splitter->saveState()); settings.setValue("workspace/layoutVersion", 2);
+    settings.setValue("leftHidden", m_focus ? m_restoreLeft : m_splitter->widget(0)->isHidden()); settings.setValue("rightHidden", m_focus ? m_restoreRight : m_splitter->widget(2)->isHidden()); settings.setValue("volume", m_volume->value());
+    settings.setValue("workspace/tab", m_sidebarTabs->currentIndex()); settings.setValue("notes/lastFile", m_noteEditor->activePath()); settings.setValue("todos/lastList", m_todoWidget->activeId());
+    settings.setValue("workspace/content", m_workspace->currentWidget() == m_todoWidget ? 1 : 0);
     QMainWindow::closeEvent(event);
 }

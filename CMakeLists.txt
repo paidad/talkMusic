@@ -15,7 +15,12 @@ qt_add_executable(talkMusic
     mainwindow.h
     musiclibrary.cpp musiclibrary.h
     playbackcontroller.cpp playbackcontroller.h
-    demochat.cpp demochat.h
+    notestore.cpp notestore.h
+    noteeditor.cpp noteeditor.h
+    notenavigator.cpp notenavigator.h
+    markdownoutline.cpp markdownoutline.h
+    todostore.cpp todostore.h
+    todowidget.cpp todowidget.h
     uihelpers.cpp uihelpers.h
     lyricsreader.cpp lyricsreader.h
 )
@@ -40,7 +45,12 @@ if(BUILD_TESTING)
         mainwindow.cpp mainwindow.h
         musiclibrary.cpp musiclibrary.h
         playbackcontroller.cpp playbackcontroller.h
-        demochat.cpp demochat.h
+        notestore.cpp notestore.h
+        noteeditor.cpp noteeditor.h
+        notenavigator.cpp notenavigator.h
+        markdownoutline.cpp markdownoutline.h
+        todostore.cpp todostore.h
+        todowidget.cpp todowidget.h
         uihelpers.cpp uihelpers.h
         lyricsreader.cpp lyricsreader.h
     )
