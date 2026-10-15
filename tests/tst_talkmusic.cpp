@@ -8,6 +8,7 @@
 #include <QPushButton>
 #include <QToolButton>
 #include <QSplitter>
+#include <QRubberBand>
 #include <QTabWidget>
 #include <QSlider>
 #include <QSettings>
@@ -364,7 +365,11 @@ private slots:
     void noteEditorSwitchingAndOutline() {
         QSettings().clear(); const auto root = m_temp.path() + "/editor"; QVERIFY(QDir().mkpath(root)); NoteStore store; store.setRoot(root);
         const auto a = store.create(root, "A"); const auto b = store.create(root, "B");
+        QSettings().setValue("notes/mode", 2); // Migrate the removed split mode.
         NoteEditor editor(&store); editor.resize(850, 650); editor.show(); QVERIFY(editor.openFile(a));
+        QCOMPARE(editor.mode(), 1); QCOMPARE(QSettings().value("notes/mode").toInt(), 1);
+        QVERIFY(!editor.findChild<QPushButton *>("noteMode2"));
+        QCOMPARE(editor.findChild<QPushButton *>("noteMode1")->text(), QString("预览"));
         editor.activeEditor()->insertPlainText("# Same\n\ntext\n\n# Same\nsecond\n"); QVERIFY(editor.flushAll());
         auto *firstEditor = editor.activeEditor(); firstEditor->moveCursor(QTextCursor::End); firstEditor->insertPlainText("extra");
         QVERIFY(editor.openFile(b)); QVERIFY(editor.openFile(a)); QCOMPARE(editor.activeEditor(), firstEditor); QVERIFY(firstEditor->document()->isUndoAvailable());
@@ -372,7 +377,10 @@ private slots:
         auto *preview = editor.activeWebEditor(); QVERIFY(preview); QTRY_VERIFY_WITH_TIMEOUT(preview->ready(), 15000);
         editor.jumpToHeading(4);
         QCOMPARE(webValue(preview, "(() => {const n=window.getSelection().anchorNode;return (n.nodeType===1?n:n.parentElement).closest('h1').textContent.replace(/^#+\\s*/, '');})()").toString(), QString("Same"));
-        editor.setMode(2); QCOMPARE(editor.mode(), 2); editor.resize(600, 650); QTest::qWait(50); QVERIFY(!editor.findChild<QPushButton *>("noteMode2")->isEnabled());
+        editor.setMode(2); QCOMPARE(editor.mode(), 1);
+        editor.resize(600, 650); QTest::qWait(50);
+        QVERIFY(editor.findChild<QPushButton *>("noteMode1")->isEnabled());
+        editor.setMode(0); QVERIFY(firstEditor->isVisible()); QVERIFY(!preview->isVisible());
         // Relative images are resolved from the document directory; remote images stay unloaded.
         QImage image(12, 12, QImage::Format_RGB32); image.fill(Qt::red); QVERIFY(image.save(root + "/local.png"));
         firstEditor->insertPlainText("\n![local](local.png)\n![remote](https://example.invalid/image.png)\n"); QTest::qWait(300);
@@ -479,9 +487,15 @@ private slots:
             QVERIFY(webValue(web, surfaces).toMap().value("preview").toBool());
             QVERIFY(!webValue(web, surfaces).toMap().value("previewEditable").toBool());
             QVERIFY(webValue(web, "document.querySelector('.vditor-ir__preview code').textContent.includes('added line')").toBool());
-            // A split preview must stay read-only even if the code was just expanded.
+            // Switching away from an expanded code block and back preserves its content.
             webValue(web, "document.querySelector('.vditor-ir__preview code').click(); true");
-            editor.setMode(2);
+            editor.setMode(0); QVERIFY(editor.activeEditor()->isVisible());
+            editor.setMode(1);
+            webValue(web, R"JS((() => {
+                const p=Array.from(document.querySelectorAll('.vditor-ir .vditor-reset > p')).find(n=>n.textContent.includes('After.'));
+                const r=document.createRange();r.selectNodeContents(p);r.collapse(false);
+                const s=getSelection();s.removeAllRanges();s.addRange(r);p.click();return true;
+            })())JS");
             QTRY_VERIFY(!webValue(web, surfaces).toMap().value("source").toBool());
             QVERIFY(webValue(web, surfaces).toMap().value("preview").toBool());
             QVERIFY(!webValue(web, surfaces).toMap().value("previewEditable").toBool());
@@ -539,7 +553,7 @@ private slots:
         webValue(web, "document.querySelector('#menu-lists [data-back]').click(); true");
         QVERIFY(!webValue(web, "document.getElementById('menu-main').hidden").toBool());
         editor.resize(1000, 700); QTest::qWait(100);
-        editor.setMode(2); QTest::qWait(50);
+        web->setReadOnly(true); QTest::qWait(50);
         QCOMPARE(webValue(web, "getComputedStyle(document.querySelector('.vditor-ir .vditor-reset')).opacity").toString(), QString("1"));
         QVERIFY(!webValue(web, "document.querySelector('.vditor-ir .vditor-reset').isContentEditable").toBool());
     }
@@ -550,6 +564,10 @@ private slots:
         QSettings().setValue("notes/root", root); QSettings().setValue("notes/lastFile", note);
         const auto song = writeWave(m_temp.path(), "午后练习曲"); const auto storage = m_temp.path() + "/new-ui.json";
         { MusicLibrary library(nullptr, storage); library.importFiles({song}); }
+        // A layout saved before deferred resizing includes opaqueResize=true.
+        QSplitter legacy; legacy.addWidget(new QWidget); legacy.addWidget(new QWidget); legacy.addWidget(new QWidget);
+        legacy.setOpaqueResize(true); legacy.setSizes({280, 708, 290});
+        QSettings().setValue("workspace/layoutVersion", 2); QSettings().setValue("splitter", legacy.saveState());
         MainWindow window(nullptr, storage); window.show(); QTest::qWait(100);
         auto *tabs = window.findChild<QTabWidget *>("libraryTabs"); QCOMPARE(tabs->count(), 3); QCOMPARE(tabs->tabText(1), QString("笔记")); QCOMPARE(tabs->tabText(2), QString("待办"));
         QVERIFY(!window.findChild<QListWidget *>("friendList"));
@@ -557,6 +575,26 @@ private slots:
         auto *volume = window.findChild<QSlider *>("volumeSlider"); volume->setValue(0);
         auto *play = window.findChild<QToolButton *>("playButton"); play->click(); QTRY_COMPARE_WITH_TIMEOUT(play->toolTip(), QString("暂停"), 10000);
         QTRY_VERIFY_WITH_TIMEOUT(editor->activeWebEditor()->ready(), 15000);
+        QVERIFY(editor->findChild<QPushButton *>("noteMode0")->x() < editor->findChild<QPushButton *>("noteMode1")->x());
+        auto *dragSplitter = window.findChild<QSplitter *>("mainSplitter"); QVERIFY(!dragSplitter->opaqueResize());
+        const auto originalSizes = dragSplitter->sizes();
+        for (int index : {1, 2}) {
+            auto *handle = dragSplitter->handle(index); const auto start = handle->rect().center();
+            const auto before = dragSplitter->sizes();
+            QTest::mousePress(handle, Qt::LeftButton, Qt::NoModifier, start);
+            const int direction = index == 1 ? 1 : -1;
+            for (int offset : {30, 60, 20, 50}) {
+                const QPoint point = start + QPoint(direction * offset, 0);
+                QMouseEvent move(QEvent::MouseMove, QPointF(point), QPointF(handle->mapToGlobal(point)), Qt::NoButton, Qt::LeftButton, Qt::NoModifier);
+                QApplication::sendEvent(handle, &move); QTest::qWait(10);
+                QCOMPARE(dragSplitter->sizes(), before);
+                auto *indicator = dragSplitter->findChild<QRubberBand *>(); QVERIFY(indicator && indicator->isVisible());
+            }
+            QTest::mouseRelease(handle, Qt::LeftButton, Qt::NoModifier, start + QPoint(direction * 50, 0));
+            QVERIFY(dragSplitter->sizes() != before);
+            QTRY_VERIFY(!dragSplitter->findChild<QRubberBand *>() || !dragSplitter->findChild<QRubberBand *>()->isVisible());
+        }
+        dragSplitter->setSizes(originalSizes);
         window.findChild<QToolButton *>("favoriteButton")->click(); window.findChild<QToolButton *>("insertSongButton")->click(); QTRY_VERIFY(editor->activeEditor()->toPlainText().contains("午后练习曲"));
         tabs->setCurrentIndex(0); QCOMPARE(window.findChild<QStackedWidget *>("workspaceStack")->currentWidget(), editor);
         tabs->setCurrentIndex(1); QCOMPARE(play->toolTip(), QString("暂停"));
@@ -581,13 +619,16 @@ private slots:
         if (!output.isEmpty()) { QTest::qWait(100); QVERIFY(window.grab().save(output + "/talkmusic-todos.png")); }
         tabs->setCurrentIndex(0); QCOMPARE(window.findChild<QStackedWidget *>("workspaceStack")->currentWidget(), todo); QCOMPARE(play->toolTip(), QString("暂停"));
         auto *splitter = window.findChild<QSplitter *>("mainSplitter"); const auto sizes = splitter->sizes();
+        QVERIFY(!splitter->opaqueResize());
         window.findChild<QToolButton *>("focusMode")->click(); QVERIFY(splitter->widget(0)->isHidden()); QVERIFY(splitter->widget(2)->isHidden());
         window.findChild<QToolButton *>("focusMode")->click(); QVERIFY(!splitter->widget(0)->isHidden()); QVERIFY(!splitter->widget(2)->isHidden()); QCOMPARE(splitter->sizes(), sizes);
+        QVERIFY(!splitter->opaqueResize());
         window.resize(960, 640); QTest::qWait(100); QVERIFY(splitter->widget(1)->width() >= 350);
         QVERIFY(window.findChild<QWidget *>("cover")->geometry().bottom() < window.findChild<QLabel *>("playingSongTitle")->geometry().top());
         if (!output.isEmpty()) QVERIFY(window.grab().save(output + "/talkmusic-workspace-960.png"));
         volume->setValue(27); window.close(); QVERIFY(!window.isVisible());
         MainWindow restored(nullptr, storage); QCOMPARE(restored.findChild<QSlider *>("volumeSlider")->value(), 27); QCOMPARE(restored.findChild<NoteEditor *>()->activePath(), note); QCOMPARE(restored.findChild<TodoWidget *>()->activeId(), id);
+        QVERIFY(!restored.findChild<QSplitter *>("mainSplitter")->opaqueResize());
         QCOMPARE(restored.findChild<QToolButton *>("playButton")->toolTip(), QString("播放"));
     }
 

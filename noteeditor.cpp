@@ -12,14 +12,12 @@
 #include <QLabel>
 #include <QPushButton>
 #include <QStackedWidget>
-#include <QSplitter>
 #include <QFileInfo>
 #include <QDir>
 #include <QFileDialog>
 #include <QSettings>
 #include <QShortcut>
 #include <QTimer>
-#include <QResizeEvent>
 #include <QScrollBar>
 #include <QPainter>
 #include <QSignalBlocker>
@@ -88,7 +86,6 @@ bool underneath(const QString &path, const QString &parent) { return path == par
 
 struct NoteEditor::Page {
     QWidget *widget;
-    QSplitter *splitter;
     QPlainTextEdit *editor;
     WebNoteEditor *preview;
     NoteDocument *document;
@@ -107,8 +104,8 @@ NoteEditor::NoteEditor(NoteStore *store, QWidget *parent) : QWidget(parent), m_s
     m_status->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     heading->addWidget(m_title, 1); heading->addWidget(m_status); layout->addLayout(heading);
     auto *toolbar = new QHBoxLayout; toolbar->setSpacing(6);
-    const QStringList names{"源码", "编辑", "分屏"};
-    for (int i : {1, 0, 2}) {
+    const QStringList names{"源码", "预览"};
+    for (int i : {0, 1}) {
         m_modes[i] = new QPushButton(names[i]); m_modes[i]->setObjectName("noteMode" + QString::number(i)); m_modes[i]->setCheckable(true); toolbar->addWidget(m_modes[i]);
         connect(m_modes[i], &QPushButton::clicked, this, [this, i] { setMode(i); });
     }
@@ -127,7 +124,9 @@ NoteEditor::NoteEditor(NoteStore *store, QWidget *parent) : QWidget(parent), m_s
     auto *welcome = new QLabel("让音乐陪你记下灵感\n\n在右侧选择笔记文件夹，\n打开一篇文档，或新建你的第一篇笔记。");
     welcome->setObjectName("noteWelcome"); welcome->setAlignment(Qt::AlignCenter); welcome->setWordWrap(true); welcome->setProperty("role", "muted"); m_stack->addWidget(welcome);
     auto *hint = new QLabel("Ctrl+S 保存 · 输入停止后自动保存 · 笔记与待办独立管理"); hint->setWordWrap(true); hint->setProperty("role", "small"); layout->addWidget(hint);
-    m_mode = qBound(0, QSettings().value("notes/mode", 1).toInt(), 2);
+    // Keep source mode (0); migrate the former split mode (2) to editable preview (1).
+    m_mode = QSettings().value("notes/mode", 1).toInt() == 0 ? 0 : 1;
+    QSettings().setValue("notes/mode", m_mode);
     connect(store, &NoteStore::renamed, this, [this](const QString &oldPath, const QString &newPath) {
         const auto keys = m_pages.keys();
         for (const auto &key : keys) if (underneath(key, oldPath)) {
@@ -162,7 +161,6 @@ bool NoteEditor::openFile(const QString &path) {
         if (!document->open(normalized)) { emit error(document->status()); delete widget; return false; }
         page = new Page; page->widget = widget; page->document = document;
         auto *layout = new QVBoxLayout(widget); layout->setContentsMargins(0, 0, 0, 0);
-        page->splitter = new QSplitter; layout->addWidget(page->splitter);
         page->editor = new SourceEditor; page->editor->setObjectName("markdownSource"); page->editor->setPlainText(document->text());
         page->editor->setStyleSheet("QPlainTextEdit {font-family: Consolas, 'Microsoft YaHei UI'; font-size: 14px; background: #fcfbf9; border: none; padding: 10px; selection-background-color: #e8aab4;}");
         page->editor->setTabStopDistance(32); new MarkdownHighlighter(page->editor->document());
@@ -181,7 +179,7 @@ bool NoteEditor::openFile(const QString &path) {
             page->document->setText(text); page->outline = markdownHeadings(text);
             if (page == m_active) emit outlineChanged();
         });
-        page->splitter->addWidget(page->editor); page->splitter->addWidget(page->preview); page->splitter->setChildrenCollapsible(false);
+        layout->addWidget(page->editor); layout->addWidget(page->preview);
         page->renderTimer = new QTimer(widget); page->renderTimer->setSingleShot(true); page->renderTimer->setInterval(250);
         connect(page->renderTimer, &QTimer::timeout, this, [this, page] { render(page); });
         connect(page->editor, &QPlainTextEdit::textChanged, this, [page] { page->document->setText(page->editor->toPlainText()); page->renderTimer->start(); });
@@ -227,19 +225,14 @@ void NoteEditor::refresh() {
     m_status->setText(m_active ? m_active->document->status() : QString());
     m_status->setToolTip(m_active ? m_active->document->status() : QString());
     m_conflict->setVisible(m_active && m_active->document->conflict());
-    const int effectiveMode = m_mode == 2 && width() < 700 ? 1 : m_mode;
-    for (int i = 0; i < 3; ++i) { m_modes[i]->setChecked(effectiveMode == i); m_modes[i]->setEnabled(m_active && (i != 2 || width() >= 700)); }
-    if (m_active) { m_active->editor->setVisible(effectiveMode != 1); m_active->preview->setVisible(effectiveMode != 0); m_active->preview->setReadOnly(effectiveMode == 2 || effectiveMode == 0); }
+    for (int i = 0; i < 2; ++i) { m_modes[i]->setChecked(m_mode == i); m_modes[i]->setEnabled(m_active != nullptr); }
+    if (m_active) { m_active->editor->setVisible(m_mode == 0); m_active->preview->setVisible(m_mode == 1); m_active->preview->setReadOnly(m_mode == 0); }
 }
 void NoteEditor::setMode(int mode) {
-    if (mode < 0 || mode > 2 || (mode == 2 && width() < 700)) return;
+    if (mode < 0 || mode > 1) return;
     if (mode != m_mode && !flushAll()) return;
     if (m_active) render(m_active);
     m_mode = mode; QSettings().setValue("notes/mode", mode); refresh();
-}
-void NoteEditor::resizeEvent(QResizeEvent *event) {
-    QWidget::resizeEvent(event);
-    refresh();
 }
 QVector<MarkdownHeading> NoteEditor::headings() const { return m_active ? markdownHeadings(m_active->editor->toPlainText()) : QVector<MarkdownHeading>(); }
 void NoteEditor::jumpToHeading(int sourceLine) {

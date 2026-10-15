@@ -133,6 +133,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
     connect(dismiss, &QPushButton::clicked, noticeBar, &QWidget::hide);
     noticeBar->hide(); layout->addWidget(noticeBar);
     m_splitter = new QSplitter(Qt::Horizontal); m_splitter->setObjectName("mainSplitter"); m_splitter->setHandleWidth(1);
+    m_splitter->setOpaqueResize(false); // Resize the WebEngine workspace only after releasing the handle.
     m_splitter->addWidget(createPlayingPanel()); m_splitter->addWidget(createWorkspace()); m_splitter->addWidget(createLibraryPanel());
     m_splitter->setChildrenCollapsible(false); m_splitter->setStretchFactor(0, 0); m_splitter->setStretchFactor(1, 1); m_splitter->setStretchFactor(2, 0);
     layout->addWidget(m_splitter, 1); layout->addWidget(createPlaybackBar());
@@ -170,6 +171,8 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
     if (settings.contains("geometry")) restoreGeometry(settings.value("geometry").toByteArray());
     m_splitter->setSizes({280, 708, 290});
     if (settings.value("workspace/layoutVersion").toInt() == 2 && settings.contains("splitter")) m_splitter->restoreState(settings.value("splitter").toByteArray());
+    // Saved splitter state also includes opaqueResize; old layouts must not restore live resizing.
+    m_splitter->setOpaqueResize(false);
     if (settings.value("leftHidden", false).toBool()) togglePanel(0);
     if (settings.value("rightHidden", false).toBool()) togglePanel(2);
     refreshLibrary(); refreshCurrentSong(); refreshLyrics(); refreshTodos();
@@ -431,7 +434,7 @@ void MainWindow::toggleFocus() {
         m_focusState = m_splitter->saveState(); m_restoreLeft = m_splitter->widget(0)->isHidden(); m_restoreRight = m_splitter->widget(2)->isHidden();
         m_splitter->widget(0)->hide(); m_splitter->widget(2)->hide(); m_focus = true;
     } else {
-        m_splitter->widget(0)->setVisible(!m_restoreLeft); m_splitter->widget(2)->setVisible(!m_restoreRight); m_splitter->restoreState(m_focusState); m_focus = false;
+        m_splitter->widget(0)->setVisible(!m_restoreLeft); m_splitter->widget(2)->setVisible(!m_restoreRight); m_splitter->restoreState(m_focusState); m_splitter->setOpaqueResize(false); m_focus = false;
     }
     m_leftToggle->setEnabled(!m_focus); m_rightToggle->setEnabled(!m_focus); m_focusButton->setToolTip(m_focus ? "退出专注模式" : "专注模式");
 }

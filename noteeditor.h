@@ -31,8 +31,6 @@ signals:
     void activeChanged();
     void outlineChanged();
     void error(const QString &message);
-protected:
-    void resizeEvent(QResizeEvent *event) override;
 private:
     struct Page;
     void render(Page *page);
@@ -44,7 +42,7 @@ private:
     QStackedWidget *m_stack;
     QLabel *m_title, *m_status;
     QWidget *m_conflict;
-    QPushButton *m_modes[3];
+    QPushButton *m_modes[2];
     int m_mode = 0;
     bool m_flushing = false;
 };
