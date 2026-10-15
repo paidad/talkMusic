@@ -24,19 +24,19 @@
 #include <fileref.h>
 #include <tpropertymap.h>
 #include <cmath>
-#include "musiclibrary.h"
-#include "playbackcontroller.h"
-#include "notestore.h"
-#include "noteeditor.h"
-#include "webnoteeditor.h"
+#include "music/musiclibrary.h"
+#include "music/playbackcontroller.h"
+#include "notes/notestore.h"
+#include "notes/noteeditor.h"
+#include "notes/webnoteeditor.h"
 #include <QWebEngineView>
 #include <QWebEnginePage>
 #include <QEventLoop>
 #include <QPointer>
-#include "notenavigator.h"
-#include "markdownoutline.h"
-#include "todostore.h"
-#include "todowidget.h"
+#include "notes/notenavigator.h"
+#include "notes/markdownoutline.h"
+#include "todos/todostore.h"
+#include "todos/todowidget.h"
 #include <QPlainTextEdit>
 #include <QTextBrowser>
 #include <QTextBlock>
@@ -47,7 +47,7 @@
 #include <QImage>
 #include <QProcess>
 #include <QClipboard>
-#include "mainwindow.h"
+#include "app/mainwindow.h"
 
 static QString writeWave(const QString &directory, const QString &name, int seconds = 12) {
     const auto path = directory + "/" + name + ".wav";

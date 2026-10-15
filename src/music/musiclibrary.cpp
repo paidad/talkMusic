@@ -1,4 +1,4 @@
-#include "musiclibrary.h"
+#include "music/musiclibrary.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>

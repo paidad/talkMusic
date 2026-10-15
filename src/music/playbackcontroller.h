@@ -4,8 +4,8 @@
 #include <QAudioOutput>
 #include <QVector>
 #include <QPixmap>
-#include "musiclibrary.h"
-#include "lyricsreader.h"
+#include "music/musiclibrary.h"
+#include "music/lyricsreader.h"
 
 class PlaybackController : public QObject {
     Q_OBJECT

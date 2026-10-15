@@ -1,5 +1,5 @@
-#include "webnoteeditor.h"
-#include "notestore.h"
+#include "notes/webnoteeditor.h"
+#include "notes/notestore.h"
 #include <QWebEngineView>
 #include <QWebEnginePage>
 #include <QWebEngineProfile>

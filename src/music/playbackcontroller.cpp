@@ -1,4 +1,4 @@
-#include "playbackcontroller.h"
+#include "music/playbackcontroller.h"
 #include <QFileInfo>
 #include <QMediaMetaData>
 #include <QRandomGenerator>

@@ -1,6 +1,6 @@
-#include "noteeditor.h"
-#include "uihelpers.h"
-#include "webnoteeditor.h"
+#include "notes/noteeditor.h"
+#include "widgets/uihelpers.h"
+#include "notes/webnoteeditor.h"
 #include <QPlainTextEdit>
 #include <QTextBlock>
 #include <QTextLayout>

@@ -1,7 +1,7 @@
 #pragma once
 #include <QWidget>
 #include <QMap>
-#include "todostore.h"
+#include "todos/todostore.h"
 class QLabel;
 class QLineEdit;
 class QScrollArea;

@@ -8,23 +8,23 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Multimedia WebEngineWidget
 qt_standard_project_setup()
 include(cmake/TagLib.cmake)
 
-qt_add_executable(talkMusic
-    WIN32 MACOSX_BUNDLE
-    main.cpp
-    mainwindow.cpp
-    mainwindow.h
-    musiclibrary.cpp musiclibrary.h
-    playbackcontroller.cpp playbackcontroller.h
-    notestore.cpp notestore.h
-    noteeditor.cpp noteeditor.h
-    webnoteeditor.cpp webnoteeditor.h
-    notenavigator.cpp notenavigator.h
-    markdownoutline.cpp markdownoutline.h
-    todostore.cpp todostore.h
-    todowidget.cpp todowidget.h
-    uihelpers.cpp uihelpers.h
-    lyricsreader.cpp lyricsreader.h
+set(TALKMUSIC_SOURCES
+    src/app/mainwindow.cpp src/app/mainwindow.h
+    src/music/musiclibrary.cpp src/music/musiclibrary.h
+    src/music/playbackcontroller.cpp src/music/playbackcontroller.h
+    src/music/lyricsreader.cpp src/music/lyricsreader.h
+    src/notes/notestore.cpp src/notes/notestore.h
+    src/notes/noteeditor.cpp src/notes/noteeditor.h
+    src/notes/webnoteeditor.cpp src/notes/webnoteeditor.h
+    src/notes/notenavigator.cpp src/notes/notenavigator.h
+    src/notes/markdownoutline.cpp src/notes/markdownoutline.h
+    src/todos/todostore.cpp src/todos/todostore.h
+    src/todos/todowidget.cpp src/todos/todowidget.h
+    src/widgets/uihelpers.cpp src/widgets/uihelpers.h
 )
+
+qt_add_executable(talkMusic WIN32 MACOSX_BUNDLE src/main.cpp ${TALKMUSIC_SOURCES})
+target_include_directories(talkMusic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_link_libraries(talkMusic
     PRIVATE
@@ -45,20 +45,9 @@ if(BUILD_TESTING)
     find_package(Qt6 6.5 REQUIRED COMPONENTS Test)
     qt_add_executable(talkMusicTests
         tests/tst_talkmusic.cpp
-        mainwindow.cpp mainwindow.h
-        musiclibrary.cpp musiclibrary.h
-        playbackcontroller.cpp playbackcontroller.h
-        notestore.cpp notestore.h
-        noteeditor.cpp noteeditor.h
-        webnoteeditor.cpp webnoteeditor.h
-        notenavigator.cpp notenavigator.h
-        markdownoutline.cpp markdownoutline.h
-        todostore.cpp todostore.h
-        todowidget.cpp todowidget.h
-        uihelpers.cpp uihelpers.h
-        lyricsreader.cpp lyricsreader.h
+        ${TALKMUSIC_SOURCES}
     )
-    target_include_directories(talkMusicTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_include_directories(talkMusicTests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
     target_compile_definitions(talkMusicTests PRIVATE TAGLIB_FIXTURE_DIR="${TALKMUSIC_TAGLIB_SOURCE_DIR}/tests/data")
     target_link_libraries(talkMusicTests PRIVATE Qt::Widgets Qt::Multimedia Qt::WebEngineWidgets Qt::WebChannel Qt::Test tag)
     if(MSVC)

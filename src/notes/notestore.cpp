@@ -1,4 +1,4 @@
-#include "notestore.h"
+#include "notes/notestore.h"
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>

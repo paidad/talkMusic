@@ -1,4 +1,4 @@
-#include "lyricsreader.h"
+#include "music/lyricsreader.h"
 #include <QFile>
 #include <QFileInfo>
 #include <QDir>

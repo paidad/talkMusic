@@ -1,10 +1,10 @@
-#include "mainwindow.h"
-#include "uihelpers.h"
-#include "notestore.h"
-#include "noteeditor.h"
-#include "notenavigator.h"
-#include "todostore.h"
-#include "todowidget.h"
+#include "app/mainwindow.h"
+#include "widgets/uihelpers.h"
+#include "notes/notestore.h"
+#include "notes/noteeditor.h"
+#include "notes/notenavigator.h"
+#include "todos/todostore.h"
+#include "todos/todowidget.h"
 #include <QStackedWidget>
 #include <QInputDialog>
 #include <QMessageBox>

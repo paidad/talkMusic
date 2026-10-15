@@ -1,4 +1,4 @@
-#include "uihelpers.h"
+#include "widgets/uihelpers.h"
 #include <QPainter>
 #include <QPainterPath>
 #include <QRadialGradient>

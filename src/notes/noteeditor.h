@@ -1,8 +1,8 @@
 #pragma once
 #include <QWidget>
 #include <QMap>
-#include "notestore.h"
-#include "markdownoutline.h"
+#include "notes/notestore.h"
+#include "notes/markdownoutline.h"
 class QPlainTextEdit;
 class QTextBrowser;
 class QLabel;

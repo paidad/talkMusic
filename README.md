@@ -72,12 +72,24 @@ Qt Widgets / C++17 / CMake 桌面个人工作空间：左侧音乐播放，中�
 
 ## 代码结构
 
-- `MainWindow`：三栏布局、工作区切换和播放器连接。
-- `MusicLibrary`、`PlaybackController`、`lyricsreader`：音乐库、播放及歌词读取。
-- `NoteStore`、`NoteDocument`：安全文件操作、原子保存、自动保存与外部冲突检查。
-- `NoteEditor`、`WebNoteEditor`、`editor/`：源码行号、即时编辑网页、版本化桥接与持久页面状态。
-- `NoteNavigator`、`markdownoutline`：文件树与大纲。
-- `TodoStore`、`TodoWidget`：清单持久化、回收、删除撤销与任务编辑。
-- `uihelpers`：原始图标、占位封面和动态省略文本。
+```text
+talkMusic/
+├─ CMakeLists.txt          构建与部署配置
+├─ README.md
+├─ src/
+│  ├─ main.cpp            程序入口
+│  ├─ app/                MainWindow：三栏布局、工作区导航和播放器连接
+│  ├─ music/              音乐库、播放控制、歌词读取
+│  ├─ notes/              笔记存储、编辑器、网页宿主、文件树和大纲
+│  ├─ todos/              待办存储与任务界面
+│  └─ widgets/            公共图标、占位封面和省略文本组件
+├─ editor/                 即时编辑网页：HTML、CSS、JavaScript
+├─ tests/                  自动化测试
+├─ cmake/                  第三方库构建辅助配置
+├─ third_party/            Vditor 离线资源与许可证
+└─ build/                  构建产物、部署目录和测试截图（Git 忽略）
+```
 
-界面由 C++ 布局构建，初始 `mainwindow.ui` 不参与构建。Git 暂存、提交和推送由用户手动执行。
+同一模块的 `.h` 与 `.cpp` 放在一起，项目头文件以 `src/` 为根引用，例如 `notes/noteeditor.h`。应用和测试共用 CMake 中的源码列表。`NoteStore` 与 `NoteDocument` 负责文件操作、自动保存和外部冲突检查；`WebNoteEditor` 与 `editor/` 负责网页编辑器和版本化桥接。
+
+界面由 C++ 布局构建，已移除未使用的初始 `mainwindow.ui`。整理目录后，在 Qt Creator 中重新运行 CMake 并构建即可，已有音乐库、笔记、待办和设置的存放位置不变。Git 暂存、提交和推送由用户手动执行。

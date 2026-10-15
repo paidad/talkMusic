@@ -1,6 +1,6 @@
-#include "notenavigator.h"
-#include "notestore.h"
-#include "noteeditor.h"
+#include "notes/notenavigator.h"
+#include "notes/notestore.h"
+#include "notes/noteeditor.h"
 #include <QTreeWidget>
 #include <QTabWidget>
 #include <QVBoxLayout>

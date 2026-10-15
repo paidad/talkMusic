@@ -1,4 +1,4 @@
-#include "markdownoutline.h"
+#include "notes/markdownoutline.h"
 #include <QRegularExpression>
 #include <QTextDocument>
 

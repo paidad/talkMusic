@@ -1,7 +1,7 @@
 #pragma once
 #include <QMainWindow>
-#include "musiclibrary.h"
-#include "playbackcontroller.h"
+#include "music/musiclibrary.h"
+#include "music/playbackcontroller.h"
 
 class QLabel;
 class QLineEdit;
