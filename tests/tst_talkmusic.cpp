@@ -25,6 +25,11 @@
 #include "playbackcontroller.h"
 #include "notestore.h"
 #include "noteeditor.h"
+#include "webnoteeditor.h"
+#include <QWebEngineView>
+#include <QWebEnginePage>
+#include <QEventLoop>
+#include <QPointer>
 #include "notenavigator.h"
 #include "markdownoutline.h"
 #include "todostore.h"
@@ -38,6 +43,7 @@
 #include <QSignalSpy>
 #include <QImage>
 #include <QProcess>
+#include <QClipboard>
 #include "mainwindow.h"
 
 static QString writeWave(const QString &directory, const QString &name, int seconds = 12) {
@@ -82,6 +88,16 @@ static bool addEmbeddedLyrics(const QString &path, const QString &text, bool syn
 static QByteArray fileHash(const QString &path) {
     QFile file(path); if (!file.open(QIODevice::ReadOnly)) return {};
     return QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
+}
+
+static QVariant webValue(WebNoteEditor *editor, const QString &script) {
+    QEventLoop loop; QTimer timer; timer.setSingleShot(true); QVariant result;
+    QPointer<QEventLoop> guard(&loop);
+    QObject::connect(&timer, &QTimer::timeout, &loop, &QEventLoop::quit);
+    editor->view()->page()->runJavaScript(script, [guard, &result](const QVariant &value) {
+        if (!guard) return; result = value; guard->quit();
+    });
+    timer.start(5000); loop.exec(); return result;
 }
 
 class TalkMusicTest : public QObject {
@@ -353,14 +369,149 @@ private slots:
         auto *firstEditor = editor.activeEditor(); firstEditor->moveCursor(QTextCursor::End); firstEditor->insertPlainText("extra");
         QVERIFY(editor.openFile(b)); QVERIFY(editor.openFile(a)); QCOMPARE(editor.activeEditor(), firstEditor); QVERIFY(firstEditor->document()->isUndoAvailable());
         editor.setMode(1); editor.jumpToHeading(4); QCOMPARE(firstEditor->textCursor().blockNumber(), 4);
-        auto *preview = firstEditor->parentWidget()->findChild<QTextBrowser *>(); QVERIFY(preview); QCOMPARE(preview->textCursor().block().text(), QString("Same"));
+        auto *preview = editor.activeWebEditor(); QVERIFY(preview); QTRY_VERIFY_WITH_TIMEOUT(preview->ready(), 15000);
+        editor.jumpToHeading(4);
+        QCOMPARE(webValue(preview, "(() => {const n=window.getSelection().anchorNode;return (n.nodeType===1?n:n.parentElement).closest('h1').textContent.replace(/^#+\\s*/, '');})()").toString(), QString("Same"));
         editor.setMode(2); QCOMPARE(editor.mode(), 2); editor.resize(600, 650); QTest::qWait(50); QVERIFY(!editor.findChild<QPushButton *>("noteMode2")->isEnabled());
         // Relative images are resolved from the document directory; remote images stay unloaded.
         QImage image(12, 12, QImage::Format_RGB32); image.fill(Qt::red); QVERIFY(image.save(root + "/local.png"));
         firstEditor->insertPlainText("\n![local](local.png)\n![remote](https://example.invalid/image.png)\n"); QTest::qWait(300);
-        const auto resource = preview->document()->resource(QTextDocument::ImageResource, QUrl("local.png")); QVERIFY(!resource.value<QImage>().isNull());
-        QVERIFY(preview->document()->resource(QTextDocument::ImageResource, QUrl("https://example.invalid/image.png")).isNull());
+        QTRY_VERIFY_WITH_TIMEOUT(webValue(preview, "Array.from(document.images).some(i => i.src.includes('local.png') && i.naturalWidth === 12)").toBool(), 10000);
+        QVERIFY(!webValue(preview, "Array.from(document.images).some(i => i.src.includes('example.invalid') && i.naturalWidth > 0)").toBool());
         QVERIFY(editor.flushAll());
+    }
+    void liveMarkdownEditingAndPersistence() {
+        QSettings().clear(); const auto root = m_temp.path() + "/live-editor"; QVERIFY(QDir().mkpath(root));
+        QFile file(root + "/live.md"); QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("\xef\xbb\xbf# Same\r\n\r\nparagraph\r\n\r\n# Same\r\n\r\n```cpp\r\nint value = 1;\r\nreturn value;\r\n```\r\n"); file.close();
+        const auto original = fileHash(file.fileName()); NoteStore store; store.setRoot(root);
+        NoteEditor editor(&store); editor.resize(900, 680); editor.show(); QVERIFY(editor.openFile(file.fileName()));
+        auto *web = editor.activeWebEditor(); QTRY_VERIFY_WITH_TIMEOUT(web->ready(), 15000);
+        QVERIFY(editor.flushAll()); QCOMPARE(fileHash(file.fileName()), original);
+        webValue(web, "document.querySelector('.vditor-ir__preview code').click(); true"); QTest::qWait(200);
+        QVERIFY(editor.flushAll()); QCOMPARE(fileHash(file.fileName()), original);
+        QCOMPARE(webValue(web, "getComputedStyle(document.querySelector('pre.vditor-ir__marker--pre > code')).fontSize").toString(), QString("14px"));
+        QVERIFY(webValue(web, "getComputedStyle(document.querySelector('pre.vditor-ir__marker--pre'), '::before').content.includes('1')").toBool());
+        editor.setMode(0); editor.setMode(1); QVERIFY(editor.flushAll()); QCOMPARE(fileHash(file.fileName()), original);
+        QTRY_VERIFY_WITH_TIMEOUT(webValue(web, "!!document.querySelector('.vditor-ir__preview code[data-lines]')").toBool(), 5000);
+        QVERIFY(webValue(web, "document.querySelector('[data-type=code-block]').getAttribute('data-language') === 'cpp'").toBool());
+        webValue(web, "talkMusic.heading(1); talkMusic.insert({text:' 中文输入'}); true");
+        QVERIFY(editor.flushAll()); QVERIFY(editor.activeEditor()->toPlainText().contains("中文输入"));
+        QVERIFY(file.open(QIODevice::ReadOnly)); const auto bytes = file.readAll(); file.close();
+        QVERIFY(bytes.startsWith("\xef\xbb\xbf")); QVERIFY(bytes.contains("\r\n")); QVERIFY(bytes.contains(QString("中文输入").toUtf8()));
+        const auto localText = editor.activeEditor()->toPlainText();
+        // Old generation callbacks cannot overwrite the current document.
+        web->changed(-1, 99999, "stale content"); QCOMPARE(editor.activeEditor()->toPlainText(), localText);
+        webValue(web, "talkMusic.command('undo'); true"); QVERIFY(editor.flushAll());
+        QVERIFY(!editor.activeEditor()->toPlainText().contains("中文输入"));
+        webValue(web, "talkMusic.command('redo'); true"); QVERIFY(editor.flushAll());
+        QVERIFY(editor.activeEditor()->toPlainText().contains("中文输入"));
+        // A composition in progress prevents a destructive transition.
+        webValue(web, "document.querySelector('.vditor-ir .vditor-reset').dispatchEvent(new CompositionEvent('compositionstart')); true");
+        QVERIFY(!editor.flushAll());
+        webValue(web, "document.querySelector('.vditor-ir .vditor-reset').dispatchEvent(new CompositionEvent('compositionend')); true");
+        QVERIFY(editor.flushAll());
+        webValue(web, "talkMusic.insert({text:' local draft'}); true"); QVERIFY(web->synchronize());
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Truncate)); file.write("external changed"); file.close();
+        QVERIFY(!editor.flushAll()); editor.findChild<QPushButton *>("reloadNote")->click();
+        QCOMPARE(editor.activeEditor()->toPlainText(), QString("external changed")); QVERIFY(editor.flushAll());
+    }
+    void liveCodeBlockSingleSurface() {
+        // Cover both the unlabelled block from the bug report and a highlighted block.
+        for (const auto &language : {QString(), QString("cpp")}) {
+            QSettings().clear();
+            const auto root = m_temp.path() + "/single-code-" + (language.isEmpty() ? "plain" : language);
+            QVERIFY(QDir().mkpath(root));
+            const QString code = "Qt Network\nTCP/IP\nSocket\nClient/Server\nQThread\n文件";
+            QFile file(root + "/code.md"); QVERIFY(file.open(QIODevice::WriteOnly));
+            file.write(QString("# Network\n\n```%1\n%2\n```\n\nAfter.\n").arg(language, code).toUtf8()); file.close();
+            const auto original = fileHash(file.fileName());
+            NoteStore store; store.setRoot(root); NoteEditor editor(&store); editor.resize(950, 700); editor.show();
+            QVERIFY(editor.openFile(file.fileName())); auto *web = editor.activeWebEditor(); QTRY_VERIFY_WITH_TIMEOUT(web->ready(), 15000);
+            const QString surfaces = R"JS((() => {
+                const b=document.querySelector('[data-type="code-block"]');
+                const s=b.querySelector('pre.vditor-ir__marker--pre'), p=b.querySelector('.vditor-ir__preview');
+                const visible=n=>n.getClientRects().length>0 && n.getBoundingClientRect().height>0;
+                return {source:visible(s),preview:visible(p),previewEditable:p.isContentEditable};
+            })())JS";
+            QTRY_VERIFY(!webValue(web, surfaces).toMap().value("previewEditable").toBool());
+            QVERIFY(!webValue(web, surfaces).toMap().value("source").toBool());
+            QVERIFY(webValue(web, surfaces).toMap().value("preview").toBool());
+            webValue(web, "document.querySelector('.vditor-ir__preview code').click(); true");
+            QTRY_VERIFY(webValue(web, surfaces).toMap().value("source").toBool());
+            QVERIFY(!webValue(web, surfaces).toMap().value("preview").toBool());
+            QVERIFY(!webValue(web, surfaces).toMap().value("previewEditable").toBool());
+            QVERIFY(editor.flushAll()); QCOMPARE(fileHash(file.fileName()), original);
+            // Send keyboard events through the WebEngine widget, including Enter.
+            web->view()->setFocus(); QTest::qWait(50);
+            webValue(web, R"JS((() => {
+                document.querySelector('.vditor-ir .vditor-reset').focus();
+                const c=document.querySelector('pre.vditor-ir__marker--pre > code');
+                const r=document.createRange();r.setStart(c.firstChild,c.firstChild.textContent.length-1);r.collapse(true);
+                const s=getSelection();s.removeAllRanges();s.addRange(r);
+                c.click();
+                return true;
+            })())JS");
+            auto *input = web->view()->focusProxy() ? web->view()->focusProxy() : web->view();
+            QTest::keyClick(input, Qt::Key_Return); QTest::keyClicks(input, "added line");
+            QTRY_VERIFY(editor.activeEditor()->toPlainText().contains("added line"));
+            QVERIFY(editor.flushAll());
+            QCOMPARE(editor.activeEditor()->toPlainText().count("Qt Network"), 1);
+            QCOMPARE(editor.activeEditor()->toPlainText().count("```"), 2);
+            QVERIFY(webValue(web, surfaces).toMap().value("source").toBool());
+            QVERIFY(!webValue(web, surfaces).toMap().value("preview").toBool());
+            const auto output = qEnvironmentVariable("TALKMUSIC_SCREENSHOT_DIR");
+            if (!output.isEmpty()) {
+                QDir().mkpath(output); QTest::qWait(500);
+                QVERIFY(editor.grab().save(output + "/talkmusic-code-editing-" + (language.isEmpty() ? "plain" : language) + ".png"));
+            }
+            webValue(web, "talkMusic.command('undo'); true"); QVERIFY(editor.flushAll());
+            QVERIFY(!editor.activeEditor()->toPlainText().contains("added line"));
+            webValue(web, "talkMusic.command('redo'); true"); QVERIFY(editor.flushAll());
+            QVERIFY(editor.activeEditor()->toPlainText().contains("added line"));
+            // Leave the code block through the editor's normal click/selection route.
+            webValue(web, R"JS((() => {
+                const p=Array.from(document.querySelectorAll('.vditor-ir .vditor-reset > p')).find(n=>n.textContent.includes('After.'));
+                const r=document.createRange();r.selectNodeContents(p);r.collapse(false);
+                const s=getSelection();s.removeAllRanges();s.addRange(r);p.click();return true;
+            })())JS");
+            QTRY_VERIFY(!webValue(web, surfaces).toMap().value("source").toBool());
+            QVERIFY(webValue(web, surfaces).toMap().value("preview").toBool());
+            QVERIFY(!webValue(web, surfaces).toMap().value("previewEditable").toBool());
+            QVERIFY(webValue(web, "document.querySelector('.vditor-ir__preview code').textContent.includes('added line')").toBool());
+            // A split preview must stay read-only even if the code was just expanded.
+            webValue(web, "document.querySelector('.vditor-ir__preview code').click(); true");
+            editor.setMode(2);
+            QTRY_VERIFY(!webValue(web, surfaces).toMap().value("source").toBool());
+            QVERIFY(webValue(web, surfaces).toMap().value("preview").toBool());
+            QVERIFY(!webValue(web, surfaces).toMap().value("previewEditable").toBool());
+            QVERIFY(editor.flushAll()); QVERIFY(file.open(QIODevice::ReadOnly));
+            const auto saved = QString::fromUtf8(file.readAll()); file.close();
+            QCOMPARE(saved.count("Qt Network"), 1); QCOMPARE(saved.count("added line"), 1);
+            NoteEditor reopened(&store); QVERIFY(reopened.openFile(file.fileName()));
+            QCOMPARE(reopened.activeEditor()->toPlainText(), saved);
+        }
+    }
+    void liveMarkdownContextMenu() {
+        QSettings().clear(); const auto root = m_temp.path() + "/live-menu"; QVERIFY(QDir().mkpath(root));
+        QFile file(root + "/menu.md"); QVERIFY(file.open(QIODevice::WriteOnly));
+        file.write("# Heading\n\nparagraph\n\n```cpp\nint a = 1;\nreturn a;\n```\n"); file.close();
+        NoteStore store; store.setRoot(root); NoteEditor editor(&store); editor.resize(1000, 700); editor.show();
+        QVERIFY(editor.openFile(file.fileName())); auto *web = editor.activeWebEditor(); QTRY_VERIFY_WITH_TIMEOUT(web->ready(), 15000);
+        const QString selectParagraph = "(() => {const p=document.querySelector('.vditor-ir .vditor-reset > p');const r=document.createRange();r.selectNodeContents(p);const s=getSelection();s.removeAllRanges();s.addRange(r);document.dispatchEvent(new Event('selectionchange'));return p;})()";
+        QVERIFY(webValue(web, selectParagraph + ".dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:180,clientY:180})); !document.getElementById('menu').hidden").toBool());
+        webValue(web, "document.querySelector('#menu button[data-command=bold]').click(); true"); QVERIFY(editor.flushAll());
+        QVERIFY(editor.activeEditor()->toPlainText().contains("**paragraph**"));
+        webValue(web, "talkMusic.heading(0); talkMusic.command('h2'); true"); QVERIFY(editor.flushAll());
+        QVERIFY(editor.activeEditor()->toPlainText().startsWith("## Heading"));
+        webValue(web, "talkMusic.heading(0); talkMusic.command('paragraph'); true"); QVERIFY(editor.flushAll());
+        QVERIFY(editor.activeEditor()->toPlainText().startsWith("Heading"));
+        webValue(web, "document.getElementById('code-tools').querySelector('button').click(); true");
+        QTRY_COMPARE(QApplication::clipboard()->text(), QString("int a = 1;\nreturn a;"));
+        QVERIFY(!QApplication::clipboard()->text().startsWith("1"));
+        editor.setMode(2); QTest::qWait(50);
+        QCOMPARE(webValue(web, "getComputedStyle(document.querySelector('.vditor-ir .vditor-reset')).opacity").toString(), QString("1"));
+        QVERIFY(!webValue(web, "document.querySelector('.vditor-ir .vditor-reset').isContentEditable").toBool());
     }
     void interfaceAndScreenshots() {
         QSettings().clear(); const auto root = m_temp.path() + "/workspace-notes"; QVERIFY(QDir().mkpath(root + "/学习"));
@@ -375,11 +526,21 @@ private slots:
         auto *editor = window.findChild<NoteEditor *>(); QCOMPARE(editor->activePath(), note); editor->setMode(1);
         auto *volume = window.findChild<QSlider *>("volumeSlider"); volume->setValue(0);
         auto *play = window.findChild<QToolButton *>("playButton"); play->click(); QTRY_COMPARE_WITH_TIMEOUT(play->toolTip(), QString("暂停"), 10000);
-        window.findChild<QToolButton *>("favoriteButton")->click(); window.findChild<QToolButton *>("insertSongButton")->click(); QVERIFY(editor->activeEditor()->toPlainText().contains("午后练习曲"));
+        QTRY_VERIFY_WITH_TIMEOUT(editor->activeWebEditor()->ready(), 15000);
+        window.findChild<QToolButton *>("favoriteButton")->click(); window.findChild<QToolButton *>("insertSongButton")->click(); QTRY_VERIFY(editor->activeEditor()->toPlainText().contains("午后练习曲"));
         tabs->setCurrentIndex(0); QCOMPARE(window.findChild<QStackedWidget *>("workspaceStack")->currentWidget(), editor);
         tabs->setCurrentIndex(1); QCOMPARE(play->toolTip(), QString("暂停"));
         const auto output = qEnvironmentVariable("TALKMUSIC_SCREENSHOT_DIR");
-        if (!output.isEmpty()) { QDir().mkpath(output); QTest::qWait(300); QVERIFY(window.grab().save(output + "/talkmusic-notes.png")); }
+        if (!output.isEmpty()) {
+            QDir().mkpath(output); QTest::qWait(300); QVERIFY(window.grab().save(output + "/talkmusic-notes.png"));
+            window.findChild<QToolButton *>("focusMode")->click();
+            webValue(editor->activeWebEditor(), "talkMusic.heading(1); true"); QTest::qWait(800);
+            QVERIFY(window.grab().save(output + "/talkmusic-notes-focused.png"));
+            QVERIFY(webValue(editor->activeWebEditor(), "document.querySelector('.vditor-ir .vditor-reset p').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:400,clientY:200})); !document.getElementById('menu').hidden").toBool());
+            QTest::qWait(800); QVERIFY(window.grab().save(output + "/talkmusic-note-menu.png"));
+            webValue(editor->activeWebEditor(), "document.getElementById('menu').hidden=true; true");
+            window.findChild<QToolButton *>("focusMode")->click();
+        }
         auto *store = window.findChild<TodoStore *>(); const auto id = store->createList("本周的小目标"); QVERIFY(store->addTask(id, "完成 Qt 笔记", "整理模型与视图的理解")); QVERIFY(store->addTask(id, "听一张喜欢的专辑"));
         tabs->setCurrentIndex(2); auto *titles = window.findChild<QListWidget *>("todoListTitles"); titles->setCurrentRow(0); auto *todo = window.findChild<TodoWidget *>(); QCOMPARE(todo->activeId(), id);
         auto *add = window.findChild<QLineEdit *>("newTaskTitle"); add->setText("休息十分钟"); window.findChild<QPushButton *>("addTask")->click(); QCOMPARE(store->find(id)->tasks.size(), 3);

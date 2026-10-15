@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src qrc: 'unsafe-eval'; style-src qrc: 'unsafe-inline'; img-src qrc: talknote: data:; font-src qrc: data:; connect-src qrc:; object-src 'none'; frame-src 'none'; base-uri 'none'">
+<link rel="stylesheet" href="qrc:/vditor/dist/index.css">
+<link rel="stylesheet" href="qrc:/vditor/dist/js/highlight.js/styles/github.min.css">
+<link id="talkMusicTheme" rel="stylesheet" href="style.css">
+</head><body>
+<div id="editor"></div><div id="code-tools"></div>
+<div id="menu" role="menu" hidden>
+  <div class="row"><button data-command="cut">剪切</button><button data-command="copy">复制</button><button data-command="paste">粘贴</button></div>
+  <div class="row"><button data-command="undo">撤销</button><button data-command="redo">重做</button></div>
+  <hr><div class="row"><button data-command="bold"><b>加粗</b></button><button data-command="italic"><i>斜体</i></button><button data-command="inline-code">行内代码</button></div>
+  <div class="row"><button data-command="link">链接</button><button data-command="quote">引用</button></div>
+  <div class="row"><button data-command="list">无序列表</button><button data-command="ordered-list">有序列表</button><button data-command="check">任务列表</button></div>
+  <hr><div class="section">段落</div><div class="row"><button data-command="paragraph">正文</button><button data-command="h1">H1</button><button data-command="h2">H2</button><button data-command="h3">H3</button></div>
+  <div class="row"><button data-command="h4">H4</button><button data-command="h5">H5</button><button data-command="h6">H6</button></div>
+  <hr><div class="section">插入</div><div class="row"><button data-command="code">代码块</button><button data-command="line">分隔线</button><button data-command="image">本地图片</button></div>
+</div>
+<script src="qrc:/qtwebchannel/qwebchannel.js"></script>
+<script src="qrc:/vditor/dist/js/i18n/zh_CN.js"></script>
+<script src="qrc:/vditor/dist/js/lute/lute.min.js"></script>
+<script src="qrc:/vditor/dist/js/highlight.js/highlight.min.js"></script>
+<script id="vditorIconScript" src="qrc:/vditor/dist/js/icons/ant.js"></script>
+<script src="qrc:/vditor/dist/index.min.js"></script>
+<script src="editor.js"></script>
+</body></html>

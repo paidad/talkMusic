@@ -9,6 +9,7 @@ class QLabel;
 class QStackedWidget;
 class QPushButton;
 class QSplitter;
+class WebNoteEditor;
 
 class NoteEditor : public QWidget {
     Q_OBJECT
@@ -25,6 +26,7 @@ public:
     void setMode(int mode);
     int mode() const { return m_mode; }
     QPlainTextEdit *activeEditor() const;
+    WebNoteEditor *activeWebEditor() const;
 signals:
     void activeChanged();
     void outlineChanged();
@@ -44,4 +46,5 @@ private:
     QWidget *m_conflict;
     QPushButton *m_modes[3];
     int m_mode = 0;
+    bool m_flushing = false;
 };
