@@ -48,7 +48,7 @@ void TodoWidget::refresh() {
     if (list) for (const auto &task : list->tasks) {
         if (task.completed && !m_completed->isChecked()) continue;
         ++visible; auto *row = new QFrame; row->setObjectName("taskCard"); auto *rowLayout = new QHBoxLayout(row); rowLayout->setContentsMargins(12, 12, 12, 12); rowLayout->setSpacing(10);
-        auto *check = new QCheckBox; check->setObjectName("taskCheck"); check->setChecked(task.completed); check->setAccessibleName(task.title); rowLayout->addWidget(check, 0, Qt::AlignTop);
+        auto *check = new QCheckBox; check->setObjectName("taskCheck"); check->setChecked(task.completed); check->setAccessibleName(task.title); rowLayout->addWidget(check, 0, Qt::AlignVCenter);
         auto *texts = new QVBoxLayout; auto *title = new QLabel(task.title); title->setTextFormat(Qt::PlainText); title->setWordWrap(true);
         if (task.completed) { auto font = title->font(); font.setStrikeOut(true); title->setFont(font); title->setProperty("role", "muted"); }
         texts->addWidget(title);

@@ -500,15 +500,45 @@ private slots:
         QVERIFY(editor.openFile(file.fileName())); auto *web = editor.activeWebEditor(); QTRY_VERIFY_WITH_TIMEOUT(web->ready(), 15000);
         const QString selectParagraph = "(() => {const p=document.querySelector('.vditor-ir .vditor-reset > p');const r=document.createRange();r.selectNodeContents(p);const s=getSelection();s.removeAllRanges();s.addRange(r);document.dispatchEvent(new Event('selectionchange'));return p;})()";
         QVERIFY(webValue(web, selectParagraph + ".dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:180,clientY:180})); !document.getElementById('menu').hidden").toBool());
-        webValue(web, "document.querySelector('#menu button[data-command=bold]').click(); true"); QVERIFY(editor.flushAll());
+        // Navigate into a group with the keyboard, preserving the selected paragraph.
+        QCOMPARE(webValue(web, "document.querySelector('#menu [data-submenu=text]').focus();document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'ArrowRight',bubbles:true}));document.activeElement.dataset.command").toString(), QString("bold"));
+        webValue(web, "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true})); true"); QVERIFY(editor.flushAll());
         QVERIFY(editor.activeEditor()->toPlainText().contains("**paragraph**"));
-        webValue(web, "talkMusic.heading(0); talkMusic.command('h2'); true"); QVERIFY(editor.flushAll());
+        webValue(web, "talkMusic.heading(0);document.querySelector('.vditor-ir h1').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:180,clientY:180}));document.querySelector('#menu [data-submenu=paragraph]').click(); true");
+        QVERIFY(!webValue(web, "document.getElementById('menu-paragraph').hidden").toBool());
+        webValue(web, "document.querySelector('#menu-paragraph [data-command=h2]').click(); true"); QVERIFY(editor.flushAll());
         QVERIFY(editor.activeEditor()->toPlainText().startsWith("## Heading"));
         webValue(web, "talkMusic.heading(0); talkMusic.command('paragraph'); true"); QVERIFY(editor.flushAll());
         QVERIFY(editor.activeEditor()->toPlainText().startsWith("Heading"));
         webValue(web, "document.getElementById('code-tools').querySelector('button').click(); true");
         QTRY_COMPARE(QApplication::clipboard()->text(), QString("int a = 1;\nreturn a;"));
         QVERIFY(!QApplication::clipboard()->text().startsWith("1"));
+        // At the right/bottom edge the submenu opens to the left and stays in view.
+        QVERIFY(webValue(web, R"JS((() => {
+            document.querySelector('.vditor-ir .vditor-reset > p').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:innerWidth-2,clientY:innerHeight-2}));
+            document.querySelector('#menu [data-submenu=insert]').click();
+            const r=document.getElementById('menu').getBoundingClientRect(),s=document.getElementById('menu-insert').getBoundingClientRect();
+            return s.right<=r.left && s.left>=8 && s.top>=8 && s.bottom<=innerHeight-8;
+        })())JS").toBool());
+        webValue(web, "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); true");
+        QVERIFY(!webValue(web, "document.getElementById('menu').hidden").toBool());
+        webValue(web, "document.activeElement.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); true");
+        QVERIFY(webValue(web, "document.getElementById('menu').hidden").toBool());
+        // No selection and an empty clipboard disable the corresponding basic actions.
+        QApplication::clipboard()->clear();
+        webValue(web, "getSelection().collapseToEnd(); document.querySelector('.vditor-ir .vditor-reset > p').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:180,clientY:180})); true");
+        QVERIFY(webValue(web, "document.querySelector('#menu [data-command=copy]').disabled && document.querySelector('#menu [data-command=cut]').disabled && document.querySelector('#menu [data-command=paste]').disabled").toBool());
+        // Small panes use a navigable single column rather than overlapping columns.
+        editor.resize(380, 650); QTest::qWait(200);
+        QVERIFY(webValue(web, R"JS((() => {
+            document.querySelector('.vditor-ir .vditor-reset > p').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:innerWidth-2,clientY:innerHeight-2}));
+            document.querySelector('#menu [data-submenu=lists]').click();
+            const panel=document.getElementById('menu-lists'),r=panel.getBoundingClientRect();
+            return document.getElementById('menu-main').hidden && !panel.hidden && !panel.querySelector('[data-back]').hidden && r.left>=8 && r.right<=innerWidth-8 && r.bottom<=innerHeight-8;
+        })())JS").toBool());
+        webValue(web, "document.querySelector('#menu-lists [data-back]').click(); true");
+        QVERIFY(!webValue(web, "document.getElementById('menu-main').hidden").toBool());
+        editor.resize(1000, 700); QTest::qWait(100);
         editor.setMode(2); QTest::qWait(50);
         QCOMPARE(webValue(web, "getComputedStyle(document.querySelector('.vditor-ir .vditor-reset')).opacity").toString(), QString("1"));
         QVERIFY(!webValue(web, "document.querySelector('.vditor-ir .vditor-reset').isContentEditable").toBool());
@@ -537,6 +567,7 @@ private slots:
             webValue(editor->activeWebEditor(), "talkMusic.heading(1); true"); QTest::qWait(800);
             QVERIFY(window.grab().save(output + "/talkmusic-notes-focused.png"));
             QVERIFY(webValue(editor->activeWebEditor(), "document.querySelector('.vditor-ir .vditor-reset p').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,clientX:400,clientY:200})); !document.getElementById('menu').hidden").toBool());
+            webValue(editor->activeWebEditor(), "document.querySelector('#menu [data-submenu=paragraph]').click(); true");
             QTest::qWait(800); QVERIFY(window.grab().save(output + "/talkmusic-note-menu.png"));
             webValue(editor->activeWebEditor(), "document.getElementById('menu').hidden=true; true");
             window.findChild<QToolButton *>("focusMode")->click();

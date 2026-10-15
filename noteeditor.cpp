@@ -101,7 +101,10 @@ NoteEditor::NoteEditor(NoteStore *store, QWidget *parent) : QWidget(parent), m_s
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(24, 24, 24, 18); layout->setSpacing(12);
     auto *heading = new QHBoxLayout;
     m_title = new ElidedLabel("你的写作空间"); m_title->setProperty("role", "heading"); m_title->setTextFormat(Qt::PlainText);
-    m_status = new QLabel; m_status->setObjectName("noteSaveStatus"); m_status->setProperty("role", "small"); m_status->setMaximumWidth(150); m_status->setWordWrap(true);
+    m_status = new ElidedLabel(QString());
+    m_status->setObjectName("noteSaveStatus"); m_status->setProperty("role", "small");
+    m_status->setWordWrap(false); m_status->setFixedWidth(112);
+    m_status->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     heading->addWidget(m_title, 1); heading->addWidget(m_status); layout->addLayout(heading);
     auto *toolbar = new QHBoxLayout; toolbar->setSpacing(6);
     const QStringList names{"源码", "编辑", "分屏"};

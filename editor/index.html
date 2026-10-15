@@ -6,15 +6,51 @@
 <link id="talkMusicTheme" rel="stylesheet" href="style.css">
 </head><body>
 <div id="editor"></div><div id="code-tools"></div>
-<div id="menu" role="menu" hidden>
-  <div class="row"><button data-command="cut">剪切</button><button data-command="copy">复制</button><button data-command="paste">粘贴</button></div>
-  <div class="row"><button data-command="undo">撤销</button><button data-command="redo">重做</button></div>
-  <hr><div class="row"><button data-command="bold"><b>加粗</b></button><button data-command="italic"><i>斜体</i></button><button data-command="inline-code">行内代码</button></div>
-  <div class="row"><button data-command="link">链接</button><button data-command="quote">引用</button></div>
-  <div class="row"><button data-command="list">无序列表</button><button data-command="ordered-list">有序列表</button><button data-command="check">任务列表</button></div>
-  <hr><div class="section">段落</div><div class="row"><button data-command="paragraph">正文</button><button data-command="h1">H1</button><button data-command="h2">H2</button><button data-command="h3">H3</button></div>
-  <div class="row"><button data-command="h4">H4</button><button data-command="h5">H5</button><button data-command="h6">H6</button></div>
-  <hr><div class="section">插入</div><div class="row"><button data-command="code">代码块</button><button data-command="line">分隔线</button><button data-command="image">本地图片</button></div>
+<div id="menu" role="menu" aria-label="笔记编辑" hidden>
+  <div id="menu-main">
+    <button role="menuitem" data-command="undo"><span>撤销</span><kbd>Ctrl+Z</kbd></button>
+    <button role="menuitem" data-command="redo"><span>重做</span><kbd>Ctrl+Y</kbd></button>
+    <hr role="separator">
+    <button role="menuitem" data-command="cut"><span>剪切</span><kbd>Ctrl+X</kbd></button>
+    <button role="menuitem" data-command="copy"><span>复制</span><kbd>Ctrl+C</kbd></button>
+    <button role="menuitem" data-command="paste"><span>粘贴</span><kbd>Ctrl+V</kbd></button>
+    <hr role="separator">
+    <button role="menuitem" data-submenu="text" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-text"><span>文字格式</span><span class="menu-arrow">›</span></button>
+    <button role="menuitem" data-submenu="paragraph" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-paragraph"><span>段落与标题</span><span class="menu-arrow">›</span></button>
+    <button role="menuitem" data-submenu="lists" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-lists"><span>列表</span><span class="menu-arrow">›</span></button>
+    <button role="menuitem" data-submenu="insert" aria-haspopup="menu" aria-expanded="false" aria-controls="menu-insert"><span>插入</span><span class="menu-arrow">›</span></button>
+  </div>
+  <div id="menu-text" class="submenu" role="menu" aria-label="文字格式" hidden>
+    <button role="menuitem" class="submenu-back" data-back hidden><span>‹ 返回</span><span>文字格式</span></button>
+    <button role="menuitem" data-command="bold"><span>加粗</span><kbd>Ctrl+B</kbd></button>
+    <button role="menuitem" data-command="italic"><span>斜体</span><kbd>Ctrl+I</kbd></button>
+    <button role="menuitem" data-command="inline-code"><span>行内代码</span></button>
+  </div>
+  <div id="menu-paragraph" class="submenu" role="menu" aria-label="段落与标题" hidden>
+    <button role="menuitem" class="submenu-back" data-back hidden><span>‹ 返回</span><span>段落与标题</span></button>
+    <button role="menuitem" data-command="paragraph"><span>正文</span></button>
+    <button role="menuitem" data-command="h1"><span>一级标题</span></button>
+    <button role="menuitem" data-command="h2"><span>二级标题</span></button>
+    <button role="menuitem" data-command="h3"><span>三级标题</span></button>
+    <button role="menuitem" data-command="h4"><span>四级标题</span></button>
+    <button role="menuitem" data-command="h5"><span>五级标题</span></button>
+    <button role="menuitem" data-command="h6"><span>六级标题</span></button>
+    <hr role="separator">
+    <button role="menuitem" data-command="quote"><span>引用</span></button>
+  </div>
+  <div id="menu-lists" class="submenu" role="menu" aria-label="列表" hidden>
+    <button role="menuitem" class="submenu-back" data-back hidden><span>‹ 返回</span><span>列表</span></button>
+    <button role="menuitem" data-command="list"><span>无序列表</span></button>
+    <button role="menuitem" data-command="ordered-list"><span>有序列表</span></button>
+    <button role="menuitem" data-command="check"><span>任务列表</span></button>
+  </div>
+  <div id="menu-insert" class="submenu" role="menu" aria-label="插入" hidden>
+    <button role="menuitem" class="submenu-back" data-back hidden><span>‹ 返回</span><span>插入</span></button>
+    <button role="menuitem" data-command="link"><span>链接</span><kbd>Ctrl+K</kbd></button>
+    <button role="menuitem" data-command="code"><span>代码块</span></button>
+    <button role="menuitem" data-command="line"><span>分隔线</span></button>
+    <button role="menuitem" data-command="image"><span>本地图片</span></button>
+  </div>
 </div>
 <script src="qrc:/qtwebchannel/qwebchannel.js"></script>
 <script src="qrc:/vditor/dist/js/i18n/zh_CN.js"></script>
