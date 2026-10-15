@@ -22,8 +22,72 @@
 #include <QScrollBar>
 #include <QPainter>
 #include <QSignalBlocker>
+#include <QScrollArea>
+#include <QClipboard>
+#include <QApplication>
+#include <QScreen>
 
 namespace {
+QWidget *markdownHelp(QWidget *parent) {
+    auto *popup = new QWidget(parent, Qt::Popup);
+    popup->setObjectName("markdownHelpPopup");
+    popup->setAccessibleName("Markdown 语法帮助");
+    popup->setStyleSheet(R"(
+        QWidget#markdownHelpPopup { background: #fcfbf9; border: 1px solid #e8e1e3; border-radius: 10px; }
+        QLabel#helpTitle { font-size: 17px; font-weight: 600; }
+        QLabel#helpSection { color: #ce3d51; font-weight: 600; padding-top: 8px; }
+        QLabel#helpExample { background: #f3f0f2; border-radius: 8px; padding: 10px; font-family: Consolas, 'Microsoft YaHei UI'; }
+        QLabel#helpDescription { color: #8a818a; }
+        QPushButton { padding: 5px 9px; }
+    )");
+    auto *layout = new QVBoxLayout(popup); layout->setContentsMargins(16, 16, 16, 16); layout->setSpacing(10);
+    auto *header = new QHBoxLayout;
+    auto *title = new QLabel("Markdown 语法速查"); title->setObjectName("helpTitle"); header->addWidget(title, 1);
+    auto *close = new QPushButton("关闭"); close->setAccessibleName("关闭 Markdown 帮助"); header->addWidget(close);
+    QObject::connect(close, &QPushButton::clicked, popup, &QWidget::hide); layout->addLayout(header);
+    auto *intro = new QLabel("查看语法，复制示例，再回到笔记中使用。"); intro->setWordWrap(true); intro->setObjectName("helpDescription"); layout->addWidget(intro);
+    auto *scroll = new QScrollArea; scroll->setWidgetResizable(true); scroll->setFrameShape(QFrame::NoFrame);
+    scroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff); layout->addWidget(scroll, 1);
+    auto *content = new QWidget; auto *items = new QVBoxLayout(content); items->setContentsMargins(0, 0, 10, 0); items->setSpacing(8);
+    const auto section = [items](const QString &name) {
+        auto *label = new QLabel(name); label->setObjectName("helpSection"); items->addWidget(label);
+    };
+    const auto example = [items, popup](const QString &name, const QString &sample, const QString &description = QString()) {
+        auto *row = new QHBoxLayout; auto *label = new QLabel(name); row->addWidget(label, 1);
+        auto *copy = new QPushButton("复制示例"); copy->setObjectName("copyMarkdownExample");
+        copy->setAccessibleName("复制" + name + "示例"); copy->setProperty("markdownExample", sample); row->addWidget(copy);
+        QObject::connect(copy, &QPushButton::clicked, popup, [copy, sample] {
+            QApplication::clipboard()->setText(sample); copy->setText("已复制");
+            QTimer::singleShot(1200, copy, [copy] { copy->setText("复制示例"); });
+        });
+        items->addLayout(row);
+        auto *code = new QLabel(sample); code->setObjectName("helpExample"); code->setTextFormat(Qt::PlainText);
+        code->setWordWrap(true); code->setTextInteractionFlags(Qt::TextSelectableByMouse); items->addWidget(code);
+        if (!description.isEmpty()) {
+            auto *hint = new QLabel(description); hint->setObjectName("helpDescription"); hint->setWordWrap(true); items->addWidget(hint);
+        }
+    };
+    section("标题");
+    example("标题层级", "# 一级标题\n## 二级标题\n### 三级标题", "# 后留一个空格；最多可使用六个 #。");
+    section("文字格式");
+    example("加粗", "**加粗文字**"); example("斜体", "*斜体文字*"); example("行内代码", "`代码或命令`");
+    section("列表");
+    example("无序列表", "- 第一项\n- 第二项"); example("有序列表", "1. 第一项\n2. 第二项");
+    example("任务列表", "- [ ] 未完成\n- [x] 已完成", "方括号内留空格或填 x；与软件的独立待办清单互不同步。");
+    section("引用与分隔线");
+    example("引用", "> 引用的文字"); example("分隔线", "\n---\n", "分隔线上下留空行，避免被识别为标题。");
+    section("链接与图片");
+    example("链接", "[链接名称](https://example.com)");
+    example("本地图片", "![图片说明](images/photo.png)", "路径相对当前笔记所在文件夹，图片需位于所选笔记目录内；不会自动复制或上传图片。");
+    section("代码块");
+    example("带语言的代码块", "```cpp\nint main() {\n    return 0;\n}\n```", "上下各用三个反引号闭合；cpp 可换成其他语言，也可省略。");
+    section("常见提醒");
+    auto *tips = new QLabel("• 段落之间空一行。\n• Markdown 标记使用半角符号。\n• 代码块的起止反引号需要成对出现。\n• Ctrl+S 保存，输入停止后也会自动保存。");
+    tips->setWordWrap(true); tips->setObjectName("helpDescription"); items->addWidget(tips); items->addStretch(); scroll->setWidget(content);
+    auto *escape = new QShortcut(QKeySequence(Qt::Key_Escape), popup);
+    QObject::connect(escape, &QShortcut::activated, popup, &QWidget::hide);
+    return popup;
+}
 class SourceEditor : public QPlainTextEdit {
 public:
     SourceEditor() {
@@ -119,7 +183,21 @@ NoteEditor::NoteEditor(NoteStore *store, QWidget *parent) : QWidget(parent), m_s
         m_modes[i] = new QPushButton(names[i]); m_modes[i]->setObjectName("noteMode" + QString::number(i)); m_modes[i]->setCheckable(true); toolbar->addWidget(m_modes[i]);
         connect(m_modes[i], &QPushButton::clicked, this, [this, i] { setMode(i); });
     }
-    toolbar->addStretch(); auto *save = new QPushButton("保存"); save->setObjectName("saveNote"); toolbar->addWidget(save);
+    toolbar->addStretch();
+    m_help = new QPushButton("Markdown 帮助"); m_help->setObjectName("markdownHelpButton");
+    m_help->setToolTip("查看 Markdown 常用语法与示例"); m_help->setStyleSheet("padding: 7px 8px; font-size: 12px;"); toolbar->addWidget(m_help);
+    connect(m_help, &QPushButton::clicked, this, [this] {
+        if (!m_helpPopup) m_helpPopup = markdownHelp(this);
+        const auto screen = m_help->screen()->availableGeometry();
+        m_helpPopup->resize(qMin(440, screen.width() - 24), qMin(600, screen.height() - 24));
+        const auto anchor = m_help->mapToGlobal(QPoint(m_help->width(), m_help->height()));
+        int x = anchor.x() - m_helpPopup->width(); int y = anchor.y() + 6;
+        if (y + m_helpPopup->height() > screen.bottom() - 8) y = m_help->mapToGlobal(QPoint(0, 0)).y() - m_helpPopup->height() - 6;
+        x = qBound(screen.left() + 8, x, screen.right() - m_helpPopup->width() - 8);
+        y = qBound(screen.top() + 8, y, screen.bottom() - m_helpPopup->height() - 8);
+        m_helpPopup->move(x, y); m_helpPopup->show(); m_helpPopup->setFocus();
+    });
+    auto *save = new QPushButton("保存"); save->setObjectName("saveNote"); toolbar->addWidget(save);
     connect(save, &QPushButton::clicked, this, [this] { flushAll(); });
     auto *shortcut = new QShortcut(QKeySequence::Save, this); connect(shortcut, &QShortcut::activated, this, [this] { flushAll(); });
     layout->addLayout(toolbar);
@@ -236,6 +314,8 @@ void NoteEditor::refresh() {
     m_status->setToolTip(m_active ? m_active->document->status() : QString());
     m_conflict->setVisible(m_active && m_active->document->conflict());
     for (int i = 0; i < 2; ++i) { m_modes[i]->setChecked(m_mode == i); m_modes[i]->setEnabled(m_active != nullptr); }
+    m_help->setVisible(m_mode == 0);
+    if (m_mode != 0 && m_helpPopup) m_helpPopup->hide();
     if (m_active) { m_active->editor->setVisible(m_mode == 0); m_active->preview->setVisible(m_mode == 1); m_active->preview->setReadOnly(m_mode == 0); }
 }
 void NoteEditor::setMode(int mode) {

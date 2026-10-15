@@ -613,7 +613,19 @@ private slots:
             window.findChild<QToolButton *>("focusMode")->click();
             editor->setMode(0); QTest::qWait(100);
             QVERIFY(window.grab().save(output + "/talkmusic-source.png"));
+            const auto unchanged = fileHash(note); const auto text = editor->activeEditor()->toPlainText();
+            const auto cursor = editor->activeEditor()->textCursor();
+            auto *help = editor->findChild<QPushButton *>("markdownHelpButton"); QVERIFY(help->isVisible()); help->click();
+            auto *popup = editor->findChild<QWidget *>("markdownHelpPopup"); QVERIFY(popup && popup->isVisible());
+            auto *copy = popup->findChild<QPushButton *>("copyMarkdownExample"); QVERIFY(copy); copy->click();
+            QCOMPARE(QApplication::clipboard()->text(), copy->property("markdownExample").toString());
+            QCOMPARE(editor->activeEditor()->toPlainText(), text); QCOMPARE(editor->activeEditor()->textCursor().position(), cursor.position());
+            QCOMPARE(fileHash(note), unchanged);
+            QTest::qWait(100); QVERIFY(window.grab().save(output + "/talkmusic-source-help-workspace.png"));
+            QVERIFY(popup->grab().save(output + "/talkmusic-markdown-help.png"));
+            QTest::keyClick(popup, Qt::Key_Escape); QTRY_VERIFY(!popup->isVisible());
             editor->setMode(1);
+            QVERIFY(help->isHidden());
         }
         auto *store = window.findChild<TodoStore *>(); const auto id = store->createList("本周的小目标"); QVERIFY(store->addTask(id, "完成 Qt 笔记", "整理模型与视图的理解")); QVERIFY(store->addTask(id, "听一张喜欢的专辑"));
         tabs->setCurrentIndex(2); auto *titles = window.findChild<QListWidget *>("todoListTitles"); titles->setCurrentRow(0); auto *todo = window.findChild<TodoWidget *>(); QCOMPARE(todo->activeId(), id);

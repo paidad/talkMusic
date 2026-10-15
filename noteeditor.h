@@ -43,6 +43,8 @@ private:
     QLabel *m_title, *m_status;
     QWidget *m_conflict;
     QPushButton *m_modes[2];
+    QPushButton *m_help;
+    QWidget *m_helpPopup = nullptr;
     int m_mode = 0;
     bool m_flushing = false;
 };
