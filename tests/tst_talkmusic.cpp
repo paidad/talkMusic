@@ -11,6 +11,8 @@
 #include <QRubberBand>
 #include <QTabWidget>
 #include <QSlider>
+#include <QScrollBar>
+#include <QTextLayout>
 #include <QSettings>
 #include <QLabel>
 #include <QFontDatabase>
@@ -609,6 +611,9 @@ private slots:
             QTest::qWait(800); QVERIFY(window.grab().save(output + "/talkmusic-note-menu.png"));
             webValue(editor->activeWebEditor(), "document.getElementById('menu').hidden=true; true");
             window.findChild<QToolButton *>("focusMode")->click();
+            editor->setMode(0); QTest::qWait(100);
+            QVERIFY(window.grab().save(output + "/talkmusic-source.png"));
+            editor->setMode(1);
         }
         auto *store = window.findChild<TodoStore *>(); const auto id = store->createList("本周的小目标"); QVERIFY(store->addTask(id, "完成 Qt 笔记", "整理模型与视图的理解")); QVERIFY(store->addTask(id, "听一张喜欢的专辑"));
         tabs->setCurrentIndex(2); auto *titles = window.findChild<QListWidget *>("todoListTitles"); titles->setCurrentRow(0); auto *todo = window.findChild<TodoWidget *>(); QCOMPARE(todo->activeId(), id);
@@ -630,6 +635,20 @@ private slots:
         MainWindow restored(nullptr, storage); QCOMPARE(restored.findChild<QSlider *>("volumeSlider")->value(), 27); QCOMPARE(restored.findChild<NoteEditor *>()->activePath(), note); QCOMPARE(restored.findChild<TodoWidget *>()->activeId(), id);
         QVERIFY(!restored.findChild<QSplitter *>("mainSplitter")->opaqueResize());
         QCOMPARE(restored.findChild<QToolButton *>("playButton")->toolTip(), QString("播放"));
+        if (!output.isEmpty()) {
+            // Inspect mixed fonts, wrapping and real scrolling in a separate temporary document.
+            QFile sample(root + "/alignment.md"); QVERIFY(sample.open(QIODevice::WriteOnly));
+            sample.write(QString("1 标题 🥇\n\n3 正文\n%1\n5 正文\n\n7 正文\n").arg(QString("长行 text ").repeated(240)).toUtf8()); sample.close();
+            NoteStore sampleStore; sampleStore.setRoot(root);
+            NoteEditor sampleEditor(&sampleStore); sampleEditor.resize(850, 650); sampleEditor.show();
+            QVERIFY(sampleEditor.openFile(sample.fileName())); sampleEditor.setMode(0);
+            auto *source = sampleEditor.activeEditor(); QTest::qWait(100);
+            QVERIFY(source->document()->findBlockByNumber(3).layout()->lineCount() > 1);
+            QVERIFY(sampleEditor.grab().save(output + "/talkmusic-source-wrapped.png"));
+            source->verticalScrollBar()->setValue(3); QTest::qWait(100);
+            QVERIFY(source->verticalScrollBar()->value() > 0);
+            QVERIFY(sampleEditor.grab().save(output + "/talkmusic-source-scrolled.png"));
+        }
     }
 
 };

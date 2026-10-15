@@ -3,6 +3,7 @@
 #include "webnoteeditor.h"
 #include <QPlainTextEdit>
 #include <QTextBlock>
+#include <QTextLayout>
 #include <QTextDocument>
 #include <QTextCursor>
 #include <QSyntaxHighlighter>
@@ -41,12 +42,18 @@ protected:
             QPainter painter(gutter); painter.fillRect(gutter->rect(), QColor("#f5f2f4"));
             painter.setPen(QColor("#aaa0ac")); painter.setFont(font());
             auto block = firstVisibleBlock();
-            int top = qRound(blockBoundingGeometry(block).translated(contentOffset()).top());
+            qreal top = blockBoundingGeometry(block).translated(contentOffset()).top();
             while (block.isValid() && top <= gutter->height()) {
-                const int height = qRound(blockBoundingRect(block).height());
-                if (block.isVisible() && top + height >= 0)
-                    painter.drawText(0, top, gutter->width() - 10, fontMetrics().height(), Qt::AlignRight, QString::number(block.blockNumber() + 1));
-                top += height; block = block.next();
+                const qreal height = blockBoundingRect(block).height();
+                if (block.isVisible() && top + height >= 0 && block.layout()->lineCount()) {
+                    // Match the actual first visual line's baseline, including fallback fonts (e.g. emoji).
+                    const auto line = block.layout()->lineAt(0);
+                    const auto number = QString::number(block.blockNumber() + 1);
+                    painter.drawText(QPointF(gutter->width() - 10 - QFontMetricsF(font()).horizontalAdvance(number),
+                                            top + line.y() + line.ascent()), number);
+                }
+                block = block.next();
+                if (block.isValid()) top = blockBoundingGeometry(block).translated(contentOffset()).top();
             }
             return true;
         }
@@ -55,7 +62,10 @@ protected:
 private:
     void margins() {
         const int width = 20 + fontMetrics().horizontalAdvance(QString::number(qMax(99, blockCount())));
-        setViewportMargins(width, 0, 0, 0); gutter->setGeometry(0, 0, width, height()); gutter->update();
+        setViewportMargins(width, 0, 0, 0);
+        // Block geometry is relative to the viewport, whose origin includes the stylesheet padding.
+        const auto area = viewport()->geometry();
+        gutter->setGeometry(area.left() - width, area.top(), width, area.height()); gutter->update();
     }
     QWidget *gutter;
 };
