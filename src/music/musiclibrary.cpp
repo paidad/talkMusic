@@ -10,6 +10,7 @@
 #include <QStandardPaths>
 
 QString MusicLibrary::normalizedPath(const QString &path) {
+    // 文件存在时优先解析真实路径；缺失记录仍保留清理后的绝对路径供提示与恢复。
     QFileInfo info(path);
     QString result = info.canonicalFilePath();
     if (result.isEmpty()) result = QDir::cleanPath(info.absoluteFilePath());
@@ -36,6 +37,7 @@ MusicLibrary::MusicLibrary(QObject *parent, const QString &storagePath) : QObjec
             } else QTimer::singleShot(0, this, [this] { emit storageError(tr("音乐库文件损坏，已使用空音乐库；导入后将重新保存。")); });
         } else QTimer::singleShot(0, this, [this] { emit storageError(tr("无法读取音乐库文件。")); });
     }
+    // 串行探测需要超时兜底，防止某个坏文件阻塞后续全部歌曲。
     m_probeTimeout.setSingleShot(true);
     m_probeTimeout.setInterval(3000);
     connect(&m_probeTimeout, &QTimer::timeout, this, &MusicLibrary::finishProbe);
@@ -63,6 +65,7 @@ const Song *MusicLibrary::find(const QString &path) const {
 }
 
 int MusicLibrary::importFiles(const QStringList &paths) {
+    // 先用文件名显示，元数据稍后异步补齐，导入时不等待媒体加载。
     int count = 0;
     for (const auto &file : paths) {
         const auto path = normalizedPath(file);
@@ -76,6 +79,7 @@ int MusicLibrary::importFiles(const QStringList &paths) {
 }
 
 void MusicLibrary::toggleFavorite(const QString &path) {
+    // 当前音乐库先改内存再保存，失败通过 storageError 反馈，并未实现事务回滚。
     for (auto &song : m_songs) if (song.path == path) {
         song.favorite = !song.favorite;
         save(); emit changed(); return;
@@ -85,6 +89,7 @@ void MusicLibrary::toggleFavorite(const QString &path) {
 bool MusicLibrary::removeSong(const QString &path) {
     const auto *song = find(path);
     if (!song) return false;
+    // 删除会使容器元素地址失效，先复制后续通知所需的路径。
     const auto storedPath = song->path;
     for (int i = 0; i < m_songs.size(); ++i) {
         if (m_songs[i].path != storedPath) continue;
@@ -97,6 +102,7 @@ bool MusicLibrary::removeSong(const QString &path) {
 }
 
 void MusicLibrary::updateMetadata(const QString &path, const QString &title, const QString &artist) {
+    // 只更新仍在库内的记录；删除后的迟到探测结果不能把歌曲重新加入。
     for (auto &song : m_songs) if (song.path == path) {
         bool updated = false;
         if (!title.trimmed().isEmpty() && title != song.title) { song.title = title; updated = true; }
@@ -114,6 +120,7 @@ void MusicLibrary::probeNext() {
 }
 
 void MusicLibrary::finishProbe() {
+    // 取消当前超时并清空媒体源，下一次探测排到后续事件处理，降低后端通知交错。
     if (m_probing.isEmpty()) return;
     m_probeTimeout.stop();
     const auto path = m_probing;
@@ -131,6 +138,7 @@ void MusicLibrary::save() {
     }
     QJsonArray data;
     for (const auto &song : m_songs) data.append(QJsonObject{{"path", song.path}, {"title", song.title}, {"artist", song.artist}, {"favorite", song.favorite}});
+    // 临时文件写完整后再替换目标，避免直接截断库文件造成半写损坏。
     QSaveFile file(m_storagePath);
     const auto bytes = QJsonDocument(data).toJson();
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit())

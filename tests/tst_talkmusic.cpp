@@ -93,6 +93,7 @@ static QByteArray fileHash(const QString &path) {
     return QCryptographicHash::hash(file.readAll(), QCryptographicHash::Sha256);
 }
 
+// 测试使用真实 WebEngine 执行脚本；有界等待并防止超时后的回调访问已销毁局部变量。
 static QVariant webValue(WebNoteEditor *editor, const QString &script) {
     QEventLoop loop; QTimer timer; timer.setSingleShot(true); QVariant result;
     QPointer<QEventLoop> guard(&loop);
@@ -109,6 +110,7 @@ private:
     QTemporaryDir m_temp;
 private slots:
     void initTestCase() {
+        // 将设置与业务数据放入临时位置，测试不得污染用户真实音乐库或笔记。
         QVERIFY(m_temp.isValid());
         if (qEnvironmentVariable("QT_QPA_PLATFORM") == "offscreen") {
             // The Windows offscreen plugin does not enumerate system fonts.
@@ -128,6 +130,7 @@ private slots:
         QVERIFY(parseLyrics("[ti:No timestamps]\njust words").isEmpty());
     }
     void embeddedLyricsAndPrecedence() {
+        // 同时验证内嵌歌词读取和外部 LRC 的优先级，防止新增来源覆盖规则改变。
         const auto wave = writeWave(m_temp.path(), "内嵌歌词测试");
         QVERIFY(addEmbeddedLyrics(wave, "第一句\n第二句", false, TagLib::String::UTF16));
         const auto original = fileHash(wave);
@@ -172,6 +175,7 @@ private slots:
         }
     }
     void removalAndQueue() {
+        // 移除当前曲、待播放曲与重复移除，分别验证库记录和播放器响应。
         const auto a = writeWave(m_temp.path(), "Remove A"); const auto b = writeWave(m_temp.path(), "Remove B");
         const auto storage = m_temp.path() + "/removal.json";
         MusicLibrary library(nullptr, storage); library.importFiles({a, b});
@@ -298,6 +302,7 @@ private slots:
         QVERIFY(windowsFile.open(QIODevice::ReadOnly)); QCOMPARE(windowsFile.readAll(), QByteArray("\xef\xbb\xbf") + "# Windows\r\nnext\r\n");
     }
     void noteConflictsAndFailures() {
+        // 验证外部编辑、保存失败及用户冲突选择，不只覆盖正常写盘。
         const auto root = m_temp.path() + "/conflicts"; QVERIFY(QDir().mkpath(root)); NoteStore store; store.setRoot(root);
         const auto path = store.create(root, "conflict.md"); NoteDocument document(&store); QVERIFY(document.open(path));
         document.setText("local draft");
@@ -315,6 +320,7 @@ private slots:
         document.checkDisk(); QVERIFY(!document.overwrite()); QCOMPARE(document.text(), QString("do not lose this")); QVERIFY(document.dirty());
     }
     void todosPersistenceRecycleAndUndo() {
+        // 区分持久化的清单回收与仅内存保留的任务删除撤销。
         const auto directory = m_temp.path() + "/todos-model"; TodoStore store(nullptr, directory);
         const auto id = store.createList("本周计划"); QVERIFY(!id.isEmpty());
         QVERIFY(store.addTask(id, "第一项", "备注")); QVERIFY(store.addTask(id, "第二项"));
@@ -427,6 +433,7 @@ private slots:
         QCOMPARE(editor.activeEditor()->toPlainText(), QString("external changed")); QVERIFY(editor.flushAll());
     }
     void liveCodeBlockSingleSurface() {
+        // 原生按键验证真实编辑链路；仅调用脚本插入无法替代回车、撤销和离开代码块。
         // Cover both the unlabelled block from the bug report and a highlighted block.
         for (const auto &language : {QString(), QString("cpp")}) {
             QSettings().clear();
@@ -560,6 +567,7 @@ private slots:
         QVERIFY(!webValue(web, "document.querySelector('.vditor-ir .vditor-reset').isContentEditable").toBool());
     }
     void interfaceAndScreenshots() {
+        // 端到端界面回归；截图供外观检查，状态与内容仍使用断言验证。
         QSettings().clear(); const auto root = m_temp.path() + "/workspace-notes"; QVERIFY(QDir().mkpath(root + "/学习"));
         const auto note = root + "/学习/Qt 学习笔记.md"; QFile file(note); QVERIFY(file.open(QIODevice::WriteOnly));
         file.write(QString("# 音乐陪伴下的学习时光\n\n让思绪安静下来，记下今天的新发现。\n\n## 今天的收获\n\n- 保留原始 Markdown\n- 文件夹与大纲各司其职\n- 写作时，音乐继续播放\n\n```cpp\n// 把灵感留在这里\nauto today = QStringLiteral(\"从容一点\");\n```\n\n## 接下来\n\n> 一份笔记，一段旋律，一个清晰的开始。\n").toUtf8()); file.close();

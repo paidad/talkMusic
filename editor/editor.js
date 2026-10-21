@@ -1,7 +1,9 @@
-/* TalkMusic owns persistence. This page only edits and reports versioned Markdown. */
+/* 网页只负责编辑与上报带版本的 Markdown；文件持久化由 C++ 的 NoteDocument 统一管理。 */
 (() => {
   'use strict';
+  // generation 区分内容重载，revision 区分本轮输入；original 保证只查看时不改写原文。
   let host, editor, generation = 0, revision = 0, original = '', modified = false;
+  // muted 抑制程序初始化上报；composing 保护中文组合输入；savedRange 供菜单恢复选区。
   let muted = false, composing = false, readonly = false, savedRange = null, decorationQueued = false;
   const menu = document.getElementById('menu');
   const mainMenu = document.getElementById('menu-main');
@@ -10,6 +12,7 @@
   const element = () => editor.vditor.ir.element;
   const selection = () => window.getSelection();
   const remember = () => { const s = selection(); if (s.rangeCount && element().contains(s.anchorNode)) savedRange = s.getRangeAt(0).cloneRange(); };
+  // 菜单会转移焦点，只恢复仍挂在当前 DOM 上的选区，并重新展开选中的代码源码。
   const restore = () => {
     editor.focus();
     if (savedRange && savedRange.startContainer.isConnected) {
@@ -19,11 +22,13 @@
       if (code && !readonly) code.classList.add('vditor-ir__node--expand');
     }
   };
+  // 不把载入、只读变化或尚未确认的输入法文本报告为可保存的用户编辑。
   const report = () => {
     if (muted || composing || readonly) return;
     modified = true; const text = editor.getValue(); ++revision;
     host.changed(generation, revision, text); scheduleDecoration();
   };
+  // 代码块装饰不改正文：行号写入 data 属性，复制按钮放在独立浮层。
   function decorate() {
     decorationQueued = false;
     if (!editor || !editor.vditor.ir || composing) return;
@@ -31,8 +36,7 @@
     element().querySelectorAll('[data-type="code-block"]').forEach(block => {
       const source = block.querySelector('.vditor-ir__marker--pre > code');
       const rendered = block.querySelector('.vditor-ir__preview');
-      // The preview is a display surface. Vditor routes clicks to the source.
-      // Never allow browser input to mutate the duplicate rendered representation.
+      // 预览只是展示表面，点击由 Vditor 转入源码；禁止浏览器直接编辑第二份渲染内容。
       if (rendered) rendered.setAttribute('contenteditable', 'false');
       const info = block.querySelector('[data-type="code-block-info"]');
       block.dataset.language = info ? info.textContent.replace(/\u200b/g, '').trim() || '纯文本' : '纯文本';
@@ -50,9 +54,10 @@
       button.addEventListener('click', () => {host.clipboardWrite(source ? source.textContent.replace(/\n$/, '') : ''); button.textContent = '已复制';}); tools.append(button);
     });
   }
+  // 同一帧只安排一次装饰更新，合并 DOM、滚动和缩放触发的重复请求。
   function scheduleDecoration() { if (!decorationQueued) {decorationQueued = true; requestAnimationFrame(decorate);} }
   function toolbar(name) {
-    // Invoke the pinned editor's toolbar actions; these participate in its undo stack.
+    // 使用当前固定版本编辑器自身的工具栏命令，使操作参与其撤销栈。
     const button = document.querySelector(`.vditor-toolbar button[data-type="${name}"]`);
     if (button) button.click();
   }
@@ -62,6 +67,7 @@
     submenus.forEach(panel => {panel.hidden = true; panel.querySelector('[data-back]').hidden = true;});
     menu.querySelectorAll('[data-submenu]').forEach(button => button.setAttribute('aria-expanded', 'false'));
   }
+  // 菜单会话号使异步剪贴板查询不能回写已关闭或重新打开的旧菜单。
   function closeMenu(restoreSelection = false) {
     ++menuSession; menu.hidden = true; closeSubmenus();
     if (restoreSelection && editor && !readonly) restore();
@@ -125,6 +131,7 @@
     const trigger = menu.querySelector(`[aria-controls="${panel.id}"]`);
     closeSubmenus(); focusItem(trigger);
   }
+  // 菜单打开时接管方向键与激活键，避免这些按键同时修改底下的编辑区。
   function menuKeys(event) {
     if (menu.hidden) return false;
     const focused = document.activeElement;
@@ -154,6 +161,7 @@
     else return false;
     event.preventDefault(); event.stopImmediatePropagation(); return true;
   }
+  // 所有右键命令走同一入口；执行前恢复选区，组合输入与只读状态不接受修改。
   function command(name) {
     if (readonly || composing) return;
     closeMenu(); restore();
@@ -162,6 +170,7 @@
       host.clipboardWrite(editor.getSelection());
       if (name === 'cut') { editor.deleteValue(); report(); }
     } else if (name === 'paste') {
+      // 读取剪贴板是异步的，回调到达时可能已切换文档或进入只读状态。
       const version = generation;
       host.clipboardRead(text => { if (!text || generation !== version || readonly || composing) return; restore(); editor.insertMD(text); report(); });
     } else if (name === 'image') host.chooseImage();
@@ -172,7 +181,7 @@
       const node = range && (range.startContainer.nodeType === 1 ? range.startContainer : range.startContainer.parentElement);
       const heading = node && node.closest('h1,h2,h3,h4,h5,h6');
       if (heading) {
-        // Vditor's current-heading action removes its marker and reparses the block.
+        // 当前标题命令可移除标题标记并重新解析该块，转回正文无需直接重写 DOM。
         const button = document.querySelector('.vditor-toolbar button[data-type="headings"]');
         button.classList.add('vditor-menu--current'); button.click(); report();
       }
@@ -198,6 +207,7 @@
   menu.addEventListener('mouseleave', () => {if (!menu.dataset.compact) submenuCloseTimer = setTimeout(closeSubmenus, 240);});
   menu.addEventListener('mouseenter', () => clearTimeout(submenuCloseTimer));
   submenus.forEach(panel => panel.addEventListener('mouseenter', () => clearTimeout(submenuCloseTimer)));
+  // 只在当前编辑区域显示自定义菜单，并根据真实浮点尺寸约束在窗口边缘内。
   document.addEventListener('contextmenu', e => {
     if (!editor || readonly || !element().contains(e.target)) return;
     e.preventDefault(); if (composing) return;
@@ -220,8 +230,10 @@
   window.addEventListener('resize', () => {closeMenu(); scheduleDecoration();});
   window.addEventListener('blur', () => closeMenu());
   document.addEventListener('scroll', e => {if (!menu.contains(e.target)) closeMenu(); scheduleDecoration();}, true);
+  // C++ runJavaScript 的固定入口；参数使用 JSON 传递，不直接拼接用户文本。
   window.talkMusic = {
     load(config) {
+      // 初始化不标脏、不报告输入；除明确重置外尽量保留编辑器已有撤销状态。
       muted = true; generation = config.generation; revision = config.revision; original = config.text;
       modified = false; savedRange = null;
       const scroll = element().scrollTop;
@@ -230,6 +242,7 @@
     },
     readOnly(value) {readonly = value; if (value) editor.disabled(); else editor.enable(); element().querySelectorAll('input').forEach(i => {i.disabled=value;}); closeMenu(); scheduleDecoration();},
     snapshot() {
+      // 最后一次 input 可能早于防抖回调；快照主动补报，但组合输入中不序列化。
       if (modified && !composing) {report(); editor.vditor.undo.addToUndoStack(editor.vditor);}
       return {generation, revision, modified, composing, text: modified ? editor.getValue() : original};
     },
@@ -243,9 +256,10 @@
         selection().removeAllRanges(); selection().addRange(range); remember();
       }
     },
-    // Same action path is used by menus and integration tests.
+    // 集成测试与真实菜单复用同一命令路径，避免测试绕过实际编辑逻辑。
     command
   };
+  // 先取得宿主配置，再创建离线 Vditor；禁用自主缓存避免出现第二份保存权威。
   new QWebChannel(qt.webChannelTransport, channel => {
     host = channel.objects.host;
     host.configuration(config => {
@@ -264,15 +278,16 @@
         hint:{emoji:{},emojiPath:'qrc:/vditor/dist/images/emoji'},
         input:report,
         after() {
-          // Constructor's after callback may run before assignment finishes.
+          // after 可能早于 editor 赋值完成；延后一轮再访问编辑器实例。
           setTimeout(() => {
-            // Keep our typography after the content theme loaded by Vditor.
+            // 将项目样式放在第三方主题之后，确保暖白排版覆盖规则有效。
             document.head.appendChild(document.getElementById('talkMusicTheme'));
             talkMusic.load({...config,resetUndo:true});
             element().addEventListener('compositionstart', () => {composing = true;});
             element().addEventListener('compositionend', () => {composing = false; report();});
-            // Flush can run before Vditor's debounced input callback.
+            // 同步保存可能先于 Vditor 的防抖回调，原生 input 先记录有未报告修改。
             element().addEventListener('input', () => {if (!muted && !readonly) modified = true;});
+            // 首版不接受粘贴/拖放附件；本地图片必须经过 C++ 选择与路径验证。
             element().addEventListener('paste', e => {if (e.clipboardData.files.length) {e.preventDefault();e.stopImmediatePropagation();}}, true);
             element().addEventListener('drop', e => {e.preventDefault();e.stopImmediatePropagation();}, true);
             new MutationObserver(scheduleDecoration).observe(element(), {childList:true,subtree:true,characterData:true});

@@ -1,3 +1,4 @@
+/* 页面基础主题与居中正文；结构性显隐规则与颜色样式同样需要回归验证。 */
 :root {color-scheme:light; --accent:#cf465b; --paper:#fcfbf9;}
 * {box-sizing:border-box} html,body,#editor {height:100%;margin:0;background:var(--paper)}
 body {font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;color:#302d33}
@@ -14,6 +15,7 @@ body {font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;color:#302d33}
 .vditor-reset li {margin:5px 0}.vditor-reset blockquote {border-left:3px solid #d5a1ab;background:#f5f0f1;color:#786c74;padding:8px 18px;margin:20px 0;border-radius:0 8px 8px 0}
 .vditor-reset a {color:var(--accent)}.vditor-reset hr {border:0;height:1px;background:#ded9dc;margin:28px 0}
 .vditor-reset code {font-family:Consolas,'Microsoft YaHei UI',monospace;background:#f0edf0;color:#986174;border-radius:4px;padding:2px 5px}
+/* 代码块语言标签与行号来自 data 属性，不插入 Markdown 或代码文本。 */
 .vditor-reset [data-type='code-block'] {position:relative;background:#f3f2f5;border:1px solid #e6e2e7;border-radius:10px;margin:22px 0;padding-top:30px;overflow:hidden}
 .vditor-reset [data-type='code-block']::after {content:attr(data-language);position:absolute;top:4px;left:16px;font:12px/22px Consolas,monospace;color:#9a8e99;pointer-events:none}
 .vditor-reset [data-type='code-block'] pre {margin:0!important;border:0!important;border-radius:0!important;background:transparent!important;padding:12px 16px!important;line-height:1.65!important;font-size:14px;overflow:auto}
@@ -22,15 +24,14 @@ body {font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;color:#302d33}
 .vditor-reset [data-type='code-block'] .vditor-ir__preview code {position:relative;padding-left:36px!important}
 .vditor-reset [data-type='code-block'] .vditor-ir__preview code::before {content:attr(data-lines);position:absolute;top:0;left:0;white-space:pre;text-align:right;width:24px;padding-right:9px;border-right:1px solid #ded8e1;color:#b0a7b3;user-select:none;pointer-events:none;font:14px/1.65 Consolas,monospace}
 .vditor-reset [data-type='code-block'] pre.vditor-ir__marker--pre {position:relative}
-/* A code block has two internal DOM representations, but only one is visible.
-   Editing exposes the source; reading and split preview expose the rendered code. */
+/* 一个代码块有源码与渲染结果两个内部表面，但只应显示一个。
+   展开编辑时显示源码，折叠或只读时显示渲染结果，防止出现两份可编辑内容。 */
 .vditor-ir > .vditor-reset[contenteditable='true'] .vditor-ir__node--expand[data-type='code-block'] pre.vditor-ir__marker--pre {display:block!important;width:auto;height:auto;padding:12px 16px 12px 50px!important}
 .vditor-ir > .vditor-reset[contenteditable='true'] .vditor-ir__node--expand[data-type='code-block'] .vditor-ir__preview {display:none!important}
 .vditor-ir > .vditor-reset[contenteditable='false'] [data-type='code-block'] .vditor-ir__preview {display:block!important}
 .vditor-ir > .vditor-reset[contenteditable='false'] [data-type='code-block']::before {display:none}
-/* Keep the collapsed source in the layout exactly as Vditor expects. Its input
-   parser temporarily clears the expanded class while restoring the caret;
-   display:none here makes Chromium move the selection out of the code block. */
+/* 折叠源码保持零尺寸 inline-block，不能改成 display:none。
+   Vditor 恢复光标时会短暂清除展开类；彻底隐藏会让 Chromium 把选区移出代码块。 */
 .vditor-reset [data-type='code-block']:not(.vditor-ir__node--expand) pre.vditor-ir__marker--pre,
 .vditor-ir > .vditor-reset[contenteditable='false'] [data-type='code-block'] pre.vditor-ir__marker--pre {display:inline-block!important;width:0!important;height:0!important;padding:0!important;overflow:hidden!important}
 .vditor-reset [data-type='code-block']:not(.vditor-ir__node--expand)::before {display:none}
@@ -38,6 +39,7 @@ body {font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;color:#302d33}
 .vditor-linenumber__rows {border-color:#ded8e1!important;color:#b0a7b3}
 .vditor-ir__marker {color:#c3a9b4}.vditor-reset img {max-width:100%;border-radius:8px}
 .vditor-ir .vditor-reset[contenteditable='false'] .vditor-ir__marker:not(.vditor-ir__marker--pre) {display:none}
+/* 分组右键菜单：宽度不足时由脚本切成单列返回式面板。 */
 #menu,.submenu {position:fixed;width:224px;padding:6px;background:#fff;border:1px solid #e9e4e7;border-radius:10px;box-shadow:0 8px 28px #35232c20;font-size:13px}
 #menu {z-index:1000}#menu[hidden],#menu [hidden] {display:none!important}
 #menu-main {max-height:calc(100vh - 28px);overflow-y:auto}
@@ -52,6 +54,7 @@ body {font-family:'Microsoft YaHei UI','Segoe UI',sans-serif;color:#302d33}
 #menu .submenu-back {border-bottom:1px solid #eee9ed;border-radius:0;margin-bottom:5px;padding-bottom:10px;color:#a16b7a}
 #menu .submenu-back span:last-child {font-size:11px;color:#a397a1}
 #menu[data-compact='true'] {padding:0;border:0;background:none;box-shadow:none}
+/* 复制按钮浮层整体不拦截正文事件，仅按钮自身接收点击。 */
 #code-tools {position:fixed;inset:0;pointer-events:none;z-index:10}#code-tools button {position:absolute;pointer-events:auto;border:0;border-radius:5px;background:#ebe6ee;color:#8f7e91;font:12px 'Microsoft YaHei UI';padding:3px 9px;cursor:pointer}#code-tools button:hover {background:#f4dce2;color:var(--accent)}
 ::selection {background:#f0c5cf}::-webkit-scrollbar {width:8px;height:8px}::-webkit-scrollbar-thumb {background:#d8d1d7;border-radius:8px}
 @media(max-width:500px) {.vditor-reset,.vditor-ir > .vditor-reset {padding:16px 18px 70px!important;font-size:15px}.vditor-reset h1 {font-size:25px}}

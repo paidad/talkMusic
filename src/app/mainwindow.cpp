@@ -184,6 +184,7 @@ MainWindow::MainWindow(QWidget *parent, const QString &libraryPath) : QMainWindo
     m_sidebarTabs->setCurrentIndex(qBound(0, settings.value("workspace/tab", 1).toInt(), 2));
 }
 
+// 左侧播放信息区：封面、收藏、插入歌曲和歌词，不承担音频解码。
 QWidget *MainWindow::createPlayingPanel() {
     auto *panel = new QWidget; panel->setObjectName("playingPanel"); panel->setMinimumWidth(220);
     auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(24, 25, 24, 18); layout->setSpacing(12);
@@ -211,6 +212,7 @@ QWidget *MainWindow::createPlayingPanel() {
     return panel;
 }
 
+// 两个工作页独立存活，切换只改变可见页，保留笔记与待办的编辑状态。
 QWidget *MainWindow::createWorkspace() {
     auto *panel = new QWidget; panel->setObjectName("workspacePanel"); panel->setMinimumWidth(350);
     auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(0, 0, 0, 0);
@@ -220,6 +222,7 @@ QWidget *MainWindow::createWorkspace() {
     return panel;
 }
 
+// 右侧导航区：音乐筛选、笔记文档/大纲和待办标题列表。
 QWidget *MainWindow::createLibraryPanel() {
     auto *panel = new QWidget; panel->setObjectName("libraryPanel"); panel->setMinimumWidth(250);
     auto *layout = new QVBoxLayout(panel); layout->setContentsMargins(14, 18, 14, 16);
@@ -271,6 +274,7 @@ QWidget *MainWindow::createLibraryPanel() {
     return panel;
 }
 
+// 底部全局播放器始终存在，页面导航不会中断播放。
 QWidget *MainWindow::createPlaybackBar() {
     auto *bar = new QFrame; bar->setObjectName("playbackBar"); bar->setFixedHeight(80);
     auto *layout = new QHBoxLayout(bar); layout->setContentsMargins(24, 8, 20, 8); layout->setSpacing(12);
@@ -286,6 +290,7 @@ QWidget *MainWindow::createPlaybackBar() {
     connect(next, &QToolButton::clicked, m_playback, &PlaybackController::next);
     m_elapsed = label("00:00", "small"); m_elapsed->setFixedWidth(38); layout->addWidget(m_elapsed);
     m_progress = new QSlider(Qt::Horizontal); m_progress->setObjectName("playbackProgress"); m_progress->setRange(0, 10000); m_progress->setMinimumWidth(100); m_progress->setEnabled(false); layout->addWidget(m_progress, 1);
+    // 滑块使用 0..10000 的比例映射毫秒，松开鼠标后才提交拖动；键盘等动作单独处理。
     auto seek = [this] { m_playback->seek(qint64(double(m_progress->value()) / 10000 * m_playback->player()->duration())); };
     connect(m_progress, &QSlider::sliderReleased, this, seek);
     connect(m_progress, &QSlider::actionTriggered, this, [this](int action) {
@@ -318,6 +323,7 @@ QWidget *MainWindow::createPlaybackBar() {
 }
 
 void MainWindow::refreshLibrary() {
+    // 搜索和“收藏”只过滤展示，不改变 MusicLibrary 的内容与实际播放队列。
     m_songList->clear();
     const auto query = m_search->text().trimmed();
     for (const auto &song : m_library->songs()) {
@@ -344,6 +350,7 @@ void MainWindow::refreshLibrary() {
 }
 
 void MainWindow::refreshCurrentSong() {
+    // 播放器当前路径是歌曲身份；标题等展示信息从音乐库获取。
     const auto *song = m_library->find(m_playback->currentPath());
     m_favorite->setEnabled(song); m_share->setEnabled(song && m_noteEditor && !m_noteEditor->activePath().isEmpty());
     if (!song) {
@@ -361,6 +368,7 @@ void MainWindow::refreshCurrentSong() {
 }
 
 void MainWindow::refreshLyrics() {
+    // 同步歌词逐行高亮；只有普通歌词时显示全文，没有歌词时给出占位提示。
     m_lyricList->clear();
     const bool synced = !m_playback->lyrics().isEmpty();
     m_lyricList->setWordWrap(true);
@@ -380,6 +388,7 @@ void MainWindow::refreshLyrics() {
 }
 
 void MainWindow::refreshTodos() {
+    // 每项绑定清单 UUID，避免重命名或重名清单造成错误选择。
     QSignalBlocker blocker(m_todoList); m_todoList->clear();
     for (const auto &list : m_todos->lists()) {
         int completed = 0; for (const auto &task : list.tasks) if (task.completed) ++completed;
@@ -390,6 +399,7 @@ void MainWindow::refreshTodos() {
     if (!m_todoList->count()) { auto *item = new QListWidgetItem("还没有待办清单\n点击上方按钮新建", m_todoList); item->setFlags(Qt::NoItemFlags); }
 }
 void MainWindow::selectTodo(const QString &id) {
+    // 离开笔记前先同步保存，失败则保持笔记工作区供用户处理。
     if (!m_todos->find(id)) return;
     if (!m_noteEditor->flushAll()) { m_workspace->setCurrentWidget(m_noteEditor); return; }
     m_todoWidget->select(id); m_workspace->setCurrentWidget(m_todoWidget);
@@ -414,6 +424,7 @@ void MainWindow::importMusic() {
     notify(added ? QString("已导入 %1 首歌曲。双击右侧歌曲开始播放。").arg(added) : "没有新增歌曲：文件已存在或无法读取。");
 }
 void MainWindow::removeMusic(const QString &path) {
+    // 只移除库条目；如果正播放此曲，控制器会通过 songRemoved 信号清理状态。
     if (m_library->removeSong(path)) notify("已从音乐库移除，磁盘上的歌曲文件仍然保留。");
 }
 void MainWindow::notify(const QString &message) {
@@ -422,6 +433,7 @@ void MainWindow::notify(const QString &message) {
     m_notice->setToolTip("提示会在下次操作反馈时更新");
 }
 void MainWindow::togglePanel(int index) {
+    // 收起前记住宽度，展开时恢复，不把临时折叠状态当成用户期望宽度。
     auto *panel = m_splitter->widget(index);
     auto sizes = m_splitter->sizes();
     int &remembered = index == 0 ? m_leftWidth : m_rightWidth;
@@ -430,6 +442,7 @@ void MainWindow::togglePanel(int index) {
     } else { remembered = qMax(panel->minimumWidth(), sizes[index]); panel->hide(); }
 }
 void MainWindow::toggleFocus() {
+    // 专注模式一次隐藏两侧；退出恢复进入时的可见性和尺寸快照。
     if (!m_focus) {
         m_focusState = m_splitter->saveState(); m_restoreLeft = m_splitter->widget(0)->isHidden(); m_restoreRight = m_splitter->widget(2)->isHidden();
         m_splitter->widget(0)->hide(); m_splitter->widget(2)->hide(); m_focus = true;
@@ -447,6 +460,7 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event) {
     return QMainWindow::eventFilter(watched, event);
 }
 void MainWindow::closeEvent(QCloseEvent *event) {
+    // 关闭是最后一道保存屏障；失败忽略关闭事件，成功后才持久化窗口设置。
     if (!m_noteEditor->flushAll()) { m_workspace->setCurrentWidget(m_noteEditor); event->ignore(); return; }
     QSettings settings; settings.setValue("geometry", saveGeometry()); settings.setValue("splitter", m_focus ? m_focusState : m_splitter->saveState()); settings.setValue("workspace/layoutVersion", 2);
     settings.setValue("leftHidden", m_focus ? m_restoreLeft : m_splitter->widget(0)->isHidden()); settings.setValue("rightHidden", m_focus ? m_restoreRight : m_splitter->widget(2)->isHidden()); settings.setValue("volume", m_volume->value());

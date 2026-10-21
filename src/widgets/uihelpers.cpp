@@ -7,11 +7,13 @@ ElidedLabel::ElidedLabel(const QString &text, QWidget *parent) : QLabel(text, pa
     setTextFormat(Qt::PlainText); setToolTip(text); setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Preferred);
 }
 void ElidedLabel::paintEvent(QPaintEvent *) {
+    // 按当前可用宽度和字体度量绘制省略文本，原始 text 仍可供提示读取。
     QPainter painter(this); painter.setFont(font()); painter.setPen(palette().color(QPalette::WindowText));
     painter.drawText(contentsRect(), Qt::AlignLeft | Qt::AlignVCenter, fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width()));
 }
 
 QIcon musicIcon(const QString &name, const QColor &color) {
+    // 在两倍逻辑网格上绘制抗锯齿图标，统一形状、颜色和笔画风格。
     QPixmap pixmap(48, 48); pixmap.fill(Qt::transparent);
     QPainter painter(&pixmap);
     painter.setRenderHint(QPainter::Antialiasing);
@@ -62,6 +64,7 @@ CoverWidget::CoverWidget(QWidget *parent) : QWidget(parent) {
 }
 void CoverWidget::setArtwork(const QPixmap &artwork) { m_artwork = artwork; update(); }
 void CoverWidget::paintEvent(QPaintEvent *) {
+    // 使用正方形圆角裁剪；有封面时居中裁切，无封面时绘制唱片占位图。
     QPainter painter(this); painter.setRenderHint(QPainter::Antialiasing);
     const qreal side = qMin(width(), height());
     const QRectF square((width() - side) / 2, (height() - side) / 2, side, side);

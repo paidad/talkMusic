@@ -17,6 +17,7 @@
 #include <unsynchronizedlyricsframe.h>
 
 QVector<LyricLine> parseLyrics(const QString &text) {
+    // 一句可以有多个时间戳；将秒的小数部分补齐至三位，统一换算为毫秒。
     QVector<LyricLine> lines;
     const QRegularExpression stamp(R"(\[(\d+):(\d{1,2})(?:[.:](\d{1,3}))?\])");
     const QRegularExpression offsetPattern(R"(\[offset:([+-]?\d+)\])", QRegularExpression::CaseInsensitiveOption);
@@ -37,6 +38,7 @@ QVector<LyricLine> parseLyrics(const QString &text) {
         const auto content = line.mid(end).trimmed();
         if (!content.isEmpty()) for (const auto time : times) lines.append({time, content});
     }
+    // 相同时间戳保留原顺序，避免解析后任意交换同一时刻的条目。
     std::stable_sort(lines.begin(), lines.end(), [](const auto &a, const auto &b) { return a.time < b.time; });
     return lines;
 }
@@ -51,6 +53,7 @@ QString fromTag(const TagLib::String &text) {
     return cleanText(QString::fromUtf8(utf8.data(), qsizetype(utf8.size())));
 }
 SongLyrics fromText(const QString &text, const QString &source) {
+    // 无可解析时间戳时退化为普通文本，不根据字数猜测同步时间。
     auto cleaned = cleanText(text);
     auto lines = parseLyrics(cleaned);
     if (lines.isEmpty()) {
@@ -67,6 +70,7 @@ TagLib::ID3v2::Tag *id3Tag(TagLib::File *file) {
     return nullptr;
 }
 SongLyrics readEmbedded(const QString &path) {
+    // Windows 使用宽字符文件名，避免中文路径经过本地窄字符编码后打不开。
 #ifdef Q_OS_WIN
     const auto filename = QDir::toNativeSeparators(path).toStdWString();
 #else
@@ -78,6 +82,7 @@ SongLyrics readEmbedded(const QString &path) {
     if (ref.isNull() || !ref.file()->isValid()) return {};
     SongLyrics unsynced;
     if (auto *tag = id3Tag(ref.file())) {
+        // 同步帧优先；只有绝对毫秒时间戳才能直接与播放器进度比较。
         for (auto *frame : tag->frameList("SYLT")) {
             auto *synced = dynamic_cast<TagLib::ID3v2::SynchronizedLyricsFrame *>(frame);
             if (!synced || (synced->type() != TagLib::ID3v2::SynchronizedLyricsFrame::Lyrics && synced->type() != TagLib::ID3v2::SynchronizedLyricsFrame::TextTranscription)) continue;
@@ -95,6 +100,7 @@ SongLyrics readEmbedded(const QString &path) {
             }
             if (unsynced.empty() && !plain.isEmpty()) unsynced = {{}, plain.join('\n'), result.source};
         }
+        // 普通歌词字段也可能存放 LRC 文本，因此继续尝试解析时间戳。
         for (auto *frame : tag->frameList("USLT")) {
             auto *lyrics = dynamic_cast<TagLib::ID3v2::UnsynchronizedLyricsFrame *>(frame);
             if (!lyrics) continue;
@@ -103,6 +109,7 @@ SongLyrics readEmbedded(const QString &path) {
             if (unsynced.empty() && !result.empty()) unsynced = result;
         }
     }
+    // 补充读取不同容器映射到的通用歌词属性；保留先找到的普通歌词作为兜底。
     const auto properties = ref.file()->properties();
     for (auto it = properties.begin(); it != properties.end(); ++it) {
         const auto key = fromTag(it->first).toUpper().section(':', 0, 0);
@@ -118,6 +125,7 @@ SongLyrics readEmbedded(const QString &path) {
 }
 
 SongLyrics readSongLyrics(const QString &audioPath) {
+    // 有效的外部 LRC 优先于内嵌歌词；读取失败或内容为空时才回退。
     const auto info = QFileInfo(audioPath);
     QFile file(info.dir().filePath(info.completeBaseName() + ".lrc"));
     if (file.open(QIODevice::ReadOnly)) {

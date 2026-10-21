@@ -13,6 +13,7 @@ PlaybackController::PlaybackController(MusicLibrary *library, QObject *parent) :
 }
 
 void PlaybackController::createPlayer() {
+    // 每个新播放器都重新连接后端信号；音频输出仍复用原对象。
     m_player = new QMediaPlayer(this);
     m_player->setAudioOutput(m_audio);
     connect(m_player, &QMediaPlayer::playbackStateChanged, this, &PlaybackController::playbackStateChanged);
@@ -25,6 +26,7 @@ void PlaybackController::createPlayer() {
     });
     connect(m_player, &QMediaPlayer::mediaStatusChanged, this, [this](QMediaPlayer::MediaStatus status) {
         if (status == QMediaPlayer::EndOfMedia) {
+            // 自动切歌延后一轮；如果期间用户已换歌，忽略旧的结束通知。
             const auto source = m_current;
             QTimer::singleShot(0, this, [this, source] {
                 if (m_current == source && m_player->mediaStatus() == QMediaPlayer::EndOfMedia) advance(true, 1);
@@ -32,6 +34,7 @@ void PlaybackController::createPlayer() {
         }
     });
     connect(m_player, &QMediaPlayer::positionChanged, this, [this](qint64 position) {
+        // 拖动进度可能前进或倒退，因此按当前毫秒位置重新寻找最后一条已到达的歌词。
         int index = -1;
         for (int i = 0; i < m_lyrics.size() && m_lyrics[i].time <= position; ++i) index = i;
         if (index != m_lyricIndex) { m_lyricIndex = index; emit lyricChanged(index); }
@@ -39,6 +42,7 @@ void PlaybackController::createPlayer() {
 }
 
 void PlaybackController::playSong(const QString &path) {
+    // 库成员与磁盘存在性都要检查；编码支持情况由后端的异步错误通知反馈。
     if (!m_library->find(path)) { emit error(tr("此歌曲不在本地音乐库中，请先导入。")); return; }
     if (!QFileInfo(path).isFile()) { emit error(tr("音乐文件已移动或删除：%1").arg(QFileInfo(path).fileName())); return; }
     m_current = path;
@@ -46,8 +50,8 @@ void PlaybackController::playSong(const QString &path) {
     m_lyrics = songLyrics.timedLines; m_plainLyrics = songLyrics.plainText;
     m_lyricSource = songLyrics.source; m_lyricIndex = -1;
     emit artworkChanged({});
-    // Qt 6.7's FFmpeg backend can assert if setSource interrupts a pending load.
-    // Dispose of that load together with its player, keeping audio settings intact.
+    // 针对 Qt 6.7 FFmpeg 后端加载未完成时被 setSource 打断的断言问题，释放旧加载。
+    // 重建的是播放器，不是音频输出，因此用户音量保持不变。
     delete m_player;
     createPlayer();
     emit playbackStateChanged(QMediaPlayer::StoppedState);
@@ -67,6 +71,7 @@ void PlaybackController::clearCurrentSong() {
 }
 
 void PlaybackController::refreshMetadata() {
+    // 避免将旧媒体源的元数据写入刚切换到的新歌曲。
     if (m_current.isEmpty() || m_player->source() != QUrl::fromLocalFile(m_current)) return;
     const auto meta = m_player->metaData();
     m_library->updateMetadata(m_current, meta.stringValue(QMediaMetaData::Title), meta.stringValue(QMediaMetaData::ContributingArtist));
@@ -85,11 +90,13 @@ void PlaybackController::togglePlayback() {
 }
 
 void PlaybackController::advance(bool automatic, int direction) {
+    // 播放队列来自完整音乐库，跳过丢失文件，不受右侧搜索筛选影响。
     QStringList queue;
     for (const auto &song : m_library->songs()) if (QFileInfo(song.path).isFile()) queue.append(song.path);
     if (queue.isEmpty()) { emit error(tr("没有可播放的本地文件，请重新导入音乐。")); return; }
     int index = queue.indexOf(m_current);
     if (automatic && m_mode == RepeatOne && index >= 0) { playSong(m_current); return; }
+    // 当前随机仅避免立即重复，不保证整轮不重复，也没有单独的历史回退队列。
     if (m_mode == Shuffle && queue.size() > 1) {
         const int old = index;
         do { index = QRandomGenerator::global()->bounded(queue.size()); } while (index == old);

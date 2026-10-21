@@ -1,11 +1,14 @@
 <!doctype html>
+<!-- 所有脚本与样式随应用离线打包；CSP 与 C++ 请求拦截共同限制资源访问。 -->
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src qrc: 'unsafe-eval'; style-src qrc: 'unsafe-inline'; img-src qrc: talknote: data:; font-src qrc: data:; connect-src qrc:; object-src 'none'; frame-src 'none'; base-uri 'none'">
 <link rel="stylesheet" href="qrc:/vditor/dist/index.css">
 <link rel="stylesheet" href="qrc:/vditor/dist/js/highlight.js/styles/github.min.css">
 <link id="talkMusicTheme" rel="stylesheet" href="style.css">
 </head><body>
+<!-- 编辑正文与代码复制工具分层，工具文字不会混入 Markdown 内容。 -->
 <div id="editor"></div><div id="code-tools"></div>
+<!-- data-command 对应 editor.js 命令入口，data-submenu 对应分组导航。 -->
 <div id="menu" role="menu" aria-label="笔记编辑" hidden>
   <div id="menu-main">
     <button role="menuitem" data-command="undo"><span>撤销</span><kbd>Ctrl+Z</kbd></button>

@@ -8,6 +8,7 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Core Widgets Multimedia WebEngineWidget
 qt_standard_project_setup()
 include(cmake/TagLib.cmake)
 
+# 应用与测试共用业务源码列表，避免新增模块时漏改其中一个目标。
 set(TALKMUSIC_SOURCES
     src/app/mainwindow.cpp src/app/mainwindow.h
     src/music/musiclibrary.cpp src/music/musiclibrary.h
@@ -24,6 +25,7 @@ set(TALKMUSIC_SOURCES
 )
 
 qt_add_executable(talkMusic WIN32 MACOSX_BUNDLE src/main.cpp ${TALKMUSIC_SOURCES})
+# 统一以 src 为头文件引用根目录，例如 notes/noteeditor.h。
 target_include_directories(talkMusic PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 target_link_libraries(talkMusic
@@ -37,6 +39,7 @@ target_link_libraries(talkMusic
 )
 
 if(MSVC)
+    # 源码与中文注释统一使用 UTF-8，避免依赖本机默认代码页。
     target_compile_options(talkMusic PRIVATE /utf-8)
 endif()
 
@@ -60,7 +63,7 @@ if(BUILD_TESTING)
     set_tests_properties(talkMusicTests PROPERTIES ENVIRONMENT_MODIFICATION "PATH=path_list_prepend:${QT_BIN_DIR}")
 endif()
 
-# Vendored editor files are compiled into the executable; npm is not needed to build or run.
+# 网页与第三方编辑器资源编入 Qt 资源系统，运行时不依赖 npm 或网络下载。
 file(GLOB_RECURSE NOTE_EDITOR_ASSETS CONFIGURE_DEPENDS third_party/vditor/dist/*)
 set(NOTE_EDITOR_TARGETS talkMusic)
 if(BUILD_TESTING)
@@ -79,6 +82,7 @@ install(TARGETS talkMusic
     LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
 )
 
+# 部署整个运行目录，包括 Qt 插件与 WebEngine 进程/资源，不只复制 exe。
 qt_generate_deploy_app_script(
     TARGET talkMusic
     OUTPUT_SCRIPT deploy_script

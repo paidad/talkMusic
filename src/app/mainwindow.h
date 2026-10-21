@@ -19,6 +19,7 @@ class TodoStore;
 class TodoWidget;
 class QStackedWidget;
 class QTabWidget;
+// 应用装配层：负责布局、导航和跨模块信号连接，具体存储与播放交给对应服务。
 class MainWindow : public QMainWindow {
     Q_OBJECT
 public:
@@ -27,6 +28,7 @@ protected:
     void closeEvent(QCloseEvent *event) override;
     bool eventFilter(QObject *watched, QEvent *event) override;
 private:
+    // 四个界面区域分别创建；切换工作区不会重建底部播放器。
     QWidget *createPlayingPanel();
     QWidget *createWorkspace();
     QWidget *createLibraryPanel();
@@ -43,6 +45,7 @@ private:
     void notify(const QString &message);
     void togglePanel(int index);
     void toggleFocus();
+    // 服务由 QObject 父子关系管理；界面成员指针用于访问已加入布局的控件。
     MusicLibrary *m_library;
     PlaybackController *m_playback;
     NoteStore *m_notes;
@@ -73,6 +76,7 @@ private:
     QListWidget *m_songList;
     QListWidget *m_lyricList;
     QToolButton *m_focusButton;
+    // 专注模式暂存进入前的可见性和分栏尺寸，退出时恢复。
     bool m_focus = false, m_restoreLeft = false, m_restoreRight = false;
     QByteArray m_focusState;
     int m_lastSidebarIndex = 0;

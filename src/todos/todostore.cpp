@@ -14,6 +14,7 @@
 namespace { QString uuid() { return QUuid::createUuid().toString(QUuid::WithoutBraces); } }
 TodoStore::TodoStore(QObject *parent, const QString &directory) : QObject(parent),
     m_directory(directory.isEmpty() ? QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + "/todos" : directory) {
+    // 每份清单独立加载，单个损坏文件不阻断其他清单，原件留在磁盘上。
     for (const auto &file : QDir(m_directory).entryInfoList({"*.todo.json"}, QDir::Files | QDir::NoSymLinks, QDir::Name)) {
         TodoList list;
         if (read(file.absoluteFilePath(), list) && !find(list.id)) m_lists.append(list);
@@ -23,6 +24,7 @@ TodoStore::TodoStore(QObject *parent, const QString &directory) : QObject(parent
 QString TodoStore::filePath(const QString &id, bool trash) const { return m_directory + (trash ? "/trash/" : "/") + id + ".todo.json"; }
 const TodoList *TodoStore::find(const QString &id) const { for (const auto &list : m_lists) if (list.id == id) return &list; return nullptr; }
 bool TodoStore::read(const QString &path, TodoList &list) const {
+    // 校验版本、字段类型、UUID 与文件名一致性，避免把不兼容数据当成空清单覆盖。
     QFile file(path); if (QFileInfo(path).isSymLink() || !file.open(QIODevice::ReadOnly)) return false;
     QJsonParseError parse; const auto document = QJsonDocument::fromJson(file.readAll(), &parse);
     if (parse.error != QJsonParseError::NoError || !document.isObject()) return false;
@@ -50,6 +52,7 @@ QVector<TodoList> TodoStore::recycled() const {
     return result;
 }
 bool TodoStore::write(const TodoList &list) {
+    // 已存在但无法解析的文件禁止覆盖；写入失败也不能宣称内存修改已持久化。
     if (QFileInfo(m_directory).isSymLink() || !QDir().mkpath(m_directory) || QFileInfo(filePath(list.id)).isSymLink()) { emit error("待办保存目录不可用。"); return false; }
     if (QFileInfo::exists(filePath(list.id))) {
         TodoList disk; if (!read(filePath(list.id), disk)) { emit error("待办文件损坏或版本不支持，原文件已保留，修改未应用。"); return false; }
@@ -62,6 +65,7 @@ bool TodoStore::write(const TodoList &list) {
     return true;
 }
 bool TodoStore::replace(const TodoList &list) {
+    // 先持久化候选副本，再提交内存与通知，使普通编辑失败时保持原状态。
     if (!write(list)) return false;
     for (auto &existing : m_lists) if (existing.id == list.id) { existing = list; emit changed(); return true; }
     return false;
@@ -76,6 +80,7 @@ bool TodoStore::renameList(const QString &id, const QString &title) {
     auto updated = *list; updated.title = title.trimmed(); return replace(updated);
 }
 bool TodoStore::trashList(const QString &id) {
+    // 移动文件成功后才从活动列表移除，回收区可跨重启保留。
     if (!find(id)) return false;
     const auto trashDirectory = m_directory + "/trash";
     if (QFileInfo(trashDirectory).isSymLink() || !QDir().mkpath(trashDirectory) || !QFile::rename(filePath(id), filePath(id, true))) {
@@ -85,6 +90,7 @@ bool TodoStore::trashList(const QString &id) {
     emit changed(); return true;
 }
 bool TodoStore::restoreList(const QString &id) {
+    // 不覆盖同 ID 的活动清单；校验回收文件结构后再移动回来。
     TodoList list;
     if (QUuid(id).isNull() || find(id) || !read(filePath(id, true), list) || !QFile::rename(filePath(id, true), filePath(id))) {
         emit error("无法恢复清单：文件无效或目标已存在。"); return false;
@@ -108,6 +114,7 @@ bool TodoStore::completeTask(const QString &id, const QString &taskId, bool comp
     return false;
 }
 bool TodoStore::removeTask(const QString &id, const QString &taskId) {
+    // 先保存删除结果，成功后才压入撤销栈，避免失败操作也产生一条撤销记录。
     const auto *list = find(id); if (!list) return false;
     auto updated = *list;
     for (int i = 0; i < updated.tasks.size(); ++i) if (updated.tasks[i].id == taskId) {
@@ -118,6 +125,7 @@ bool TodoStore::removeTask(const QString &id, const QString &taskId) {
     return false;
 }
 bool TodoStore::undoRemoval(const QString &id) {
+    // 先恢复落盘，成功后弹栈；原位置超出当前长度时插到末尾。
     const auto *list = find(id); if (!list || !canUndo(id)) return false;
     const auto deleted = m_deleted[id].last(); auto updated = *list;
     updated.tasks.insert(qMin(deleted.index, int(updated.tasks.size())), deleted.task);

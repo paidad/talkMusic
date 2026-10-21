@@ -54,12 +54,14 @@ NoteNavigator::NoteNavigator(NoteStore *store, NoteEditor *editor, QWidget *pare
     refresh(); outline();
 }
 void NoteNavigator::chooseFolder() {
+    // 先同步并保存旧目录内页面，成功后才丢弃缓存、切换根目录。
     const auto path = QFileDialog::getExistingDirectory(this, "选择笔记文件夹", m_store->root());
     if (path.isEmpty() || !m_editor->flushAll()) return;
     m_editor->clearDocuments(); m_store->setRoot(path); QSettings().setValue("notes/root", m_store->root()); QSettings().remove("notes/lastFile");
 }
 QString NoteNavigator::selectedPath() const { return m_files->currentItem() ? m_files->currentItem()->data(0, Qt::UserRole).toString() : QString(); }
 void NoteNavigator::populate(QTreeWidgetItem *parent, const QString &directory) {
+    // 仅展示目录与 Markdown；不跟随链接，搜索时裁掉没有命中文件的空分支。
     const auto query = m_search->text().trimmed();
     for (const auto &entry : QDir(directory).entryInfoList(QDir::AllEntries | QDir::NoDotAndDotDot | QDir::NoSymLinks, QDir::DirsFirst | QDir::Name)) {
         if (entry.isSymLink() || entry.isJunction() || (!entry.isDir() && !entry.fileName().endsWith(".md", Qt::CaseInsensitive))) continue;
@@ -75,6 +77,7 @@ void NoteNavigator::refresh() {
     refreshSelection(false);
 }
 void NoteNavigator::refreshSelection(bool preferActive) {
+    // 树重建会触发选中项变化，临时阻断信号，避免刷新本身反过来打开文档。
     QStringList expanded; QTreeWidgetItemIterator old(m_files);
     while (*old) { if ((*old)->isExpanded()) expanded << (*old)->data(0, Qt::UserRole).toString(); ++old; }
     const auto selected = selectedPath(); const auto active = m_editor->activePath();
@@ -92,6 +95,7 @@ void NoteNavigator::refreshSelection(bool preferActive) {
     if (activeItem || selectedItem) m_files->setCurrentItem(preferActive && activeItem ? activeItem : selectedItem ? selectedItem : activeItem);
 }
 void NoteNavigator::outline() {
+    // 为每个标题寻找最近的较浅级父节点，支持跳级标题；定位值始终用源码行号。
     m_outline->clear(); QVector<QTreeWidgetItem *> parents(7, nullptr);
     for (const auto &heading : m_editor->headings()) {
         QTreeWidgetItem *parent = nullptr;
@@ -109,11 +113,13 @@ void NoteNavigator::create(bool directory) {
     if (!ok) return; const auto path = m_store->create(parent, name, directory); if (!path.isEmpty() && !directory) m_editor->openFile(path);
 }
 void NoteNavigator::renameSelected() {
+    // 文件夹重命名也会影响内部已打开文档，存储层发出 renamed 后编辑器统一更新路径。
     const auto path = selectedPath(); if (path.isEmpty() || !m_editor->flushAll()) return;
     bool ok; const auto name = QInputDialog::getText(this, "重命名", "新名称", QLineEdit::Normal, QFileInfo(path).fileName(), &ok);
     if (ok) m_store->rename(path, name);
 }
 void NoteNavigator::deleteSelected() {
+    // 删除前完成保存；只走系统回收站，不直接永久删除用户笔记。
     const auto path = selectedPath(); if (path.isEmpty() || !m_editor->flushAll()) return;
     if (QMessageBox::question(this, "移入系统回收站", "将此文档或文件夹移入系统回收站？可在系统回收站中恢复。", QMessageBox::Yes | QMessageBox::No, QMessageBox::No) == QMessageBox::Yes) m_store->trash(path);
 }

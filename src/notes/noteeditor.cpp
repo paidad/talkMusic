@@ -29,6 +29,7 @@
 
 namespace {
 QWidget *markdownHelp(QWidget *parent) {
+    // 帮助是临时浮层，只写剪贴板，不向当前文档插入示例或参与保存。
     auto *popup = new QWidget(parent, Qt::Popup);
     popup->setObjectName("markdownHelpPopup");
     popup->setAccessibleName("Markdown 语法帮助");
@@ -88,6 +89,7 @@ QWidget *markdownHelp(QWidget *parent) {
     QObject::connect(escape, &QShortcut::activated, popup, &QWidget::hide);
     return popup;
 }
+// 原生源码编辑器：行号独立绘制，正文仍由 QPlainTextEdit 管理输入与撤销。
 class SourceEditor : public QPlainTextEdit {
 public:
     SourceEditor() {
@@ -110,7 +112,7 @@ protected:
             while (block.isValid() && top <= gutter->height()) {
                 const qreal height = blockBoundingRect(block).height();
                 if (block.isVisible() && top + height >= 0 && block.layout()->lineCount()) {
-                    // Match the actual first visual line's baseline, including fallback fonts (e.g. emoji).
+                    // 按首条视觉行的真实基线对齐，兼容表情回退字体；软换行不增加逻辑行号。
                     const auto line = block.layout()->lineAt(0);
                     const auto number = QString::number(block.blockNumber() + 1);
                     painter.drawText(QPointF(gutter->width() - 10 - QFontMetricsF(font()).horizontalAdvance(number),
@@ -127,12 +129,13 @@ private:
     void margins() {
         const int width = 20 + fontMetrics().horizontalAdvance(QString::number(qMax(99, blockCount())));
         setViewportMargins(width, 0, 0, 0);
-        // Block geometry is relative to the viewport, whose origin includes the stylesheet padding.
+        // 文本块坐标相对 viewport；行号栏也要计入样式内边距，不能从外层控件原点绘制。
         const auto area = viewport()->geometry();
         gutter->setGeometry(area.left() - width, area.top(), width, area.height()); gutter->update();
     }
     QWidget *gutter;
 };
+// 基础源码着色：跨文本块记录围栏状态，不修改 Markdown 原文。
 class MarkdownHighlighter : public QSyntaxHighlighter {
 public:
     explicit MarkdownHighlighter(QTextDocument *document) : QSyntaxHighlighter(document) {}
@@ -159,6 +162,7 @@ bool underneath(const QString &path, const QString &parent) { return path == par
 }
 
 struct NoteEditor::Page {
+    // widget 拥有控件和 NoteDocument；结构体自身由 NoteEditor 显式管理。
     QWidget *widget;
     QPlainTextEdit *editor;
     WebNoteEditor *preview;
@@ -172,6 +176,7 @@ NoteEditor::NoteEditor(NoteStore *store, QWidget *parent) : QWidget(parent), m_s
     auto *layout = new QVBoxLayout(this); layout->setContentsMargins(24, 24, 24, 18); layout->setSpacing(12);
     auto *heading = new QHBoxLayout;
     m_title = new ElidedLabel("你的写作空间"); m_title->setProperty("role", "heading"); m_title->setTextFormat(Qt::PlainText);
+    // 保存提示固定单行宽度，防止“保存中”换行推移整个工作区。
     m_status = new ElidedLabel(QString());
     m_status->setObjectName("noteSaveStatus"); m_status->setProperty("role", "small");
     m_status->setWordWrap(false); m_status->setFixedWidth(112);
@@ -212,7 +217,7 @@ NoteEditor::NoteEditor(NoteStore *store, QWidget *parent) : QWidget(parent), m_s
     auto *welcome = new QLabel("让音乐陪你记下灵感\n\n在右侧选择笔记文件夹，\n打开一篇文档，或新建你的第一篇笔记。");
     welcome->setObjectName("noteWelcome"); welcome->setAlignment(Qt::AlignCenter); welcome->setWordWrap(true); welcome->setProperty("role", "muted"); m_stack->addWidget(welcome);
     auto *hint = new QLabel("Ctrl+S 保存 · 输入停止后自动保存 · 笔记与待办独立管理"); hint->setWordWrap(true); hint->setProperty("role", "small"); layout->addWidget(hint);
-    // Keep source mode (0); migrate the former split mode (2) to editable preview (1).
+    // 保留源码模式 0；旧版分屏设置 2 自动迁移为可编辑预览 1。
     m_mode = QSettings().value("notes/mode", 1).toInt() == 0 ? 0 : 1;
     QSettings().setValue("notes/mode", m_mode);
     connect(store, &NoteStore::renamed, this, [this](const QString &oldPath, const QString &newPath) {
@@ -238,6 +243,7 @@ NoteEditor::~NoteEditor() { for (auto *page : m_pages) delete page; }
 QPlainTextEdit *NoteEditor::activeEditor() const { return m_active ? m_active->editor : nullptr; }
 WebNoteEditor *NoteEditor::activeWebEditor() const { return m_active ? m_active->preview : nullptr; }
 bool NoteEditor::openFile(const QString &path) {
+    // 切换前先过保存屏障；已有页面直接复用，保留其光标、滚动和撤销历史。
     const auto normalized = QDir::cleanPath(QFileInfo(path).absoluteFilePath());
     if (normalized == activePath()) return true;
     if (!flushAll()) return false;
@@ -256,10 +262,11 @@ bool NoteEditor::openFile(const QString &path) {
         connect(page->preview, &WebNoteEditor::error, this, &NoteEditor::error);
         connect(page->preview, &WebNoteEditor::saveRequest, this, [this] { flushAll(); });
         connect(page->preview, &WebNoteEditor::textChanged, this, [this, page](const QString &text) {
+            // 网页回写源码时不再次触发源码到网页的同步，避免双向通知形成循环。
             QSignalBlocker blocked(page->editor);
             const int position = page->editor->textCursor().position();
             const int scroll = page->editor->verticalScrollBar()->value();
-            // A single undoable replacement preserves the source editor's history.
+            // 用一个可撤销编辑块替换文本，避免 setPlainText 清空源码侧撤销历史。
             auto cursor = page->editor->textCursor(); cursor.beginEditBlock();
             cursor.select(QTextCursor::Document); cursor.insertText(text); cursor.endEditBlock();
             cursor.setPosition(qMin(position, text.size())); page->editor->setTextCursor(cursor);
@@ -268,6 +275,7 @@ bool NoteEditor::openFile(const QString &path) {
             if (page == m_active) emit outlineChanged();
         });
         layout->addWidget(page->editor); layout->addWidget(page->preview);
+        // 源码变化合并后再同步网页和大纲；文档自动保存使用独立的定时器。
         page->renderTimer = new QTimer(widget); page->renderTimer->setSingleShot(true); page->renderTimer->setInterval(250);
         connect(page->renderTimer, &QTimer::timeout, this, [this, page] { render(page); });
         connect(page->editor, &QPlainTextEdit::textChanged, this, [page] { page->document->setText(page->editor->toPlainText()); page->renderTimer->start(); });
@@ -286,11 +294,14 @@ bool NoteEditor::openFile(const QString &path) {
     QSettings().setValue("notes/lastFile", activePath()); emit activeChanged(); emit outlineChanged(); return true;
 }
 bool NoteEditor::flushAll() {
+    // 嵌套等待网页快照时可能再次进入保存，重入直接失败而不是启动另一轮保存。
     if (m_flushing) return false;
     m_flushing = true;
     for (auto *page : m_pages) {
+        // 先将尚未触发防抖回调的源码交给网页，再抓取网页最终文本并落盘。
         render(page); // Deliver any native-source edit before requesting a browser snapshot.
         if (page->preview->synchronize() && page->document->save()) continue;
+        // 任一页面失败就留在该页面，向调用方返回 false，阻止关闭或丢弃内容。
         m_active = page; m_stack->setCurrentWidget(page->widget); refresh(); emit activeChanged(); emit outlineChanged();
         m_flushing = false;
         emit error("笔记尚未保存，请先处理同步失败、保存失败或外部修改冲突。"); return false;
@@ -299,11 +310,13 @@ bool NoteEditor::flushAll() {
     return true;
 }
 void NoteEditor::clearDocuments() {
+    // 调用方应先成功 flushAll；这里负责清理页面，不另行尝试保存。
     m_active = nullptr;
     for (auto *page : m_pages) { m_stack->removeWidget(page->widget); delete page->widget; delete page; }
     m_pages.clear(); m_stack->setCurrentIndex(0); refresh(); emit activeChanged(); emit outlineChanged();
 }
 void NoteEditor::render(Page *page) {
+    // setDocument 在内容相同且不要求重置时直接返回，避免无谓重建 DOM。
     page->outline = markdownHeadings(page->editor->toPlainText());
     page->preview->setDocument(page->document->path(), page->editor->toPlainText());
     if (page == m_active) emit outlineChanged();
@@ -319,6 +332,7 @@ void NoteEditor::refresh() {
     if (m_active) { m_active->editor->setVisible(m_mode == 0); m_active->preview->setVisible(m_mode == 1); m_active->preview->setReadOnly(m_mode == 0); }
 }
 void NoteEditor::setMode(int mode) {
+    // “预览”依旧可编辑；隐藏的网页设为只读，避免接受非当前编辑面的修改。
     if (mode < 0 || mode > 1) return;
     if (mode != m_mode && !flushAll()) return;
     if (m_active) render(m_active);
@@ -326,6 +340,7 @@ void NoteEditor::setMode(int mode) {
 }
 QVector<MarkdownHeading> NoteEditor::headings() const { return m_active ? markdownHeadings(m_active->editor->toPlainText()) : QVector<MarkdownHeading>(); }
 void NoteEditor::jumpToHeading(int sourceLine) {
+    // 源码按行定位，网页按解析后的标题序号定位；重复标题不按文字匹配。
     if (!m_active) return;
     render(m_active);
     auto sourceBlock = m_active->editor->document()->findBlockByNumber(sourceLine);
@@ -335,6 +350,7 @@ void NoteEditor::jumpToHeading(int sourceLine) {
     m_active->preview->jumpToHeading(ordinal);
 }
 void NoteEditor::insertSong(const QString &title, const QString &artist, const QString &path) {
+    // 向当前可见编辑面的光标处插入引用，不能总写进隐藏源码的旧光标位置。
     if (!m_active) return;
     const auto text = QString("\n> 正在听：%1%2  \n> 本地路径：%3\n\n").arg(title, artist.isEmpty() ? QString() : " — " + artist, path);
     if (!m_active->editor->isVisible()) { m_active->preview->insertMarkdown(text); return; }
@@ -342,6 +358,7 @@ void NoteEditor::insertSong(const QString &title, const QString &artist, const Q
     m_active->editor->setTextCursor(cursor);
 }
 void NoteEditor::resolveSaveAs() {
+    // 另存之前也要抓取网页最新输入；目标若已在其他页面打开则拒绝覆盖。
     if (!m_active) return;
     if (!m_active->preview->synchronize()) return;
     const auto chosen = QFileDialog::getSaveFileName(this, "将本地版本另存为", activePath(), "Markdown (*.md)");

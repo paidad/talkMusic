@@ -21,6 +21,7 @@ bool samePath(const QString &a, const QString &b) {
 }
 }
 NoteStore::NoteStore(QObject *parent) : QObject(parent) {
+    // 合并一次文件操作触发的多条目录通知，避免文件树连续重建。
     m_timer.setSingleShot(true); m_timer.setInterval(150);
     connect(&m_watcher, &QFileSystemWatcher::directoryChanged, this, [this] { m_timer.start(); });
     connect(&m_timer, &QTimer::timeout, this, [this] { watch(); emit changed(); });
@@ -30,6 +31,7 @@ void NoteStore::setRoot(const QString &path) {
     m_root = path.isEmpty() ? QString() : absolute(path); watch(); emit changed();
 }
 bool NoteStore::contains(const QString &path) const {
+    // 先判断相对根目录是否越界，再逐级检查链接，不能仅用字符串 startsWith。
     if (!available()) return false;
     const auto candidate = absolute(path);
     const auto relative = QDir(m_root).relativeFilePath(candidate);
@@ -44,6 +46,7 @@ bool NoteStore::contains(const QString &path) const {
     return true;
 }
 bool NoteStore::validName(const QString &name) {
+    // 同时排除 Windows 保留设备名、非法字符以及末尾空格/句点。
     const QRegularExpression invalid(R"([<>:"/\\|?*\x00-\x1f])");
     const QRegularExpression reserved(R"(^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])(?:\.|$))", QRegularExpression::CaseInsensitiveOption);
     return !name.trimmed().isEmpty() && name != "." && name != ".." && !name.endsWith('.') && !name.endsWith(' ') &&
@@ -107,6 +110,7 @@ NoteDocument::NoteDocument(NoteStore *store, QObject *parent) : QObject(parent),
 void NoteDocument::setStatus(const QString &text) { m_status = text; emit statusChanged(); }
 void NoteDocument::markConflict(const QString &message) { m_saveTimer.stop(); m_conflict = true; setStatus(message); }
 bool NoteDocument::read(QString &text, QByteArray &hash) {
+    // 解码失败不拿替代字符覆盖原件；内存统一用 LF，另记原文件 BOM 与换行类型。
     if (!m_store->contains(m_path)) { setStatus("笔记目录不可用或文件已变为符号链接，编辑内容仍保留。"); return false; }
     QFile file(m_path);
     if (!file.open(QIODevice::ReadOnly)) { setStatus("无法读取笔记：" + file.errorString()); return false; }
@@ -128,17 +132,20 @@ bool NoteDocument::reload() {
     watch(); m_poll.start(); setStatus("已保存"); emit reloaded(); return true;
 }
 void NoteDocument::watch() {
+    // 原子替换文件可能使旧监听失效，重新绑定文件和父目录两个入口。
     if (!m_watcher.files().isEmpty()) m_watcher.removePaths(m_watcher.files());
     if (!m_watcher.directories().isEmpty()) m_watcher.removePaths(m_watcher.directories());
     if (QFileInfo(m_path).isFile()) m_watcher.addPath(m_path);
     if (QFileInfo(QFileInfo(m_path).absolutePath()).isDir()) m_watcher.addPath(QFileInfo(m_path).absolutePath());
 }
 void NoteDocument::setText(const QString &text) {
+    // 实际内容改变才标脏；冲突期间暂停自动保存，等待用户选择保留哪个版本。
     if (text == m_text) return;
     m_text = text; m_dirty = true;
     if (!m_conflict) { setStatus("保存中…"); m_saveTimer.start(); }
 }
 void NoteDocument::checkDisk(bool force) {
+    // 定时轮询可用时间/大小快速筛选；保存前强制读取摘要，以磁盘基线识别变化。
     if (m_path.isEmpty()) return;
     if (m_conflict) return;
     const QFileInfo info(m_path);
@@ -149,6 +156,7 @@ void NoteDocument::checkDisk(bool force) {
     }
     const auto bytes = file.readAll();
     if (file.error() != QFileDevice::NoError) { markConflict("文件读取失败，编辑内容仍保留。"); return; }
+    // 无本地修改时自动重载；有本地修改时进入冲突，不能静默覆盖任一版本。
     if (digest(bytes) != m_hash) {
         if (m_dirty) markConflict("检测到外部修改，请选择保留哪个版本。");
         else if (!reload()) markConflict("外部文件无法加载，原内容仍保留。");
@@ -157,6 +165,7 @@ void NoteDocument::checkDisk(bool force) {
     watch();
 }
 bool NoteDocument::write(const QString &path) {
+    // 此处是统一落盘入口：再次验证目标范围，恢复编码标记，再提交原子替换。
     if (!m_store->contains(path) || !path.endsWith(".md", Qt::CaseInsensitive)) { setStatus("保存失败：目标必须位于笔记目录内，且不能是符号链接。"); return false; }
     QString text = m_text; if (m_crlf) text.replace("\n", "\r\n");
     const auto bytes = (m_bom ? QByteArray("\xef\xbb\xbf") : QByteArray()) + text.toUtf8();
@@ -164,11 +173,13 @@ bool NoteDocument::write(const QString &path) {
     if (!file.open(QIODevice::WriteOnly) || file.write(bytes) != bytes.size() || !file.commit()) {
         setStatus("保存失败：" + file.errorString()); return false;
     }
+    // 仅在提交成功后更新比较基线和已保存状态，失败仍保留内存草稿。
     m_path = absolute(path); m_hash = digest(bytes); m_dirty = false; m_conflict = false;
     const QFileInfo info(m_path); m_diskTime = info.lastModified(); m_diskSize = info.size();
     m_saveTimer.stop(); watch(); setStatus("已保存"); return true;
 }
 bool NoteDocument::save() {
+    // 检查与写入不是跨进程事务，仍存在外部程序在二者之间修改文件的竞争窗口。
     if (m_conflict) return false;
     checkDisk();
     if (m_conflict) return false;

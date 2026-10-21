@@ -7,9 +7,11 @@
 #include "music/musiclibrary.h"
 #include "music/lyricsreader.h"
 
+// 封装媒体后端和歌词定位，向界面发出状态信号，不直接操作主窗口控件。
 class PlaybackController : public QObject {
     Q_OBJECT
 public:
+    // 顺序自然结束时停止；随机避免立即重复；单曲循环仅约束自动切歌。
     enum Mode { Sequential, Shuffle, RepeatOne };
     explicit PlaybackController(MusicLibrary *library, QObject *parent = nullptr);
     QString currentPath() const { return m_current; }
@@ -40,15 +42,18 @@ signals:
     void error(const QString &message);
 private:
     void createPlayer();
+    // automatic 区分自然播完与用户切歌，direction 表示向前或向后。
     void advance(bool automatic, int direction);
     void refreshMetadata();
     MusicLibrary *m_library;
+    // 切歌可能重建播放器；音频输出独立保留以维持音量。
     QMediaPlayer *m_player;
     QAudioOutput *m_audio;
     QString m_current;
     QVector<LyricLine> m_lyrics;
     QString m_plainLyrics;
     QString m_lyricSource;
+    // -1 表示当前位置尚未进入任何同步歌词。
     int m_lyricIndex = -1;
     Mode m_mode = Sequential;
 };

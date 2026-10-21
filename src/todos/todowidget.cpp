@@ -28,6 +28,7 @@ TodoWidget::TodoWidget(TodoStore *store, QWidget *parent) : QWidget(parent), m_s
     connect(store, &TodoStore::changed, this, &TodoWidget::refresh); refresh();
 }
 void TodoWidget::select(const QString &id) {
+    // 切换时分别保存各清单滚动位置，避免共享滚动条导致返回后跳到错误位置。
     if (id == m_active) return;
     m_positions[m_active] = m_scroll->verticalScrollBar()->value();
     if (!m_positions.contains(id)) m_positions[id] = 0;
@@ -36,6 +37,7 @@ void TodoWidget::select(const QString &id) {
 }
 void TodoWidget::add() { if (m_store->addTask(m_active, m_add->text())) { m_add->clear(); m_add->setFocus(); } }
 void TodoWidget::refresh() {
+    // 以 Store 为准重建任务卡片；保存失败的勾选会回刷成实际记录状态。
     const auto *list = m_store->find(m_active);
     if (!list && !m_active.isEmpty()) { m_active.clear(); emit activeChanged(); }
     m_title->setText(list ? list->title : "把今天，安排得从容一点"); m_add->setEnabled(list); m_completed->setEnabled(list); m_undo->setEnabled(list && m_store->canUndo(m_active));
@@ -56,6 +58,8 @@ void TodoWidget::refresh() {
         rowLayout->addLayout(texts, 1);
         auto *editButton = new QPushButton("编辑"); editButton->setObjectName("editTask"); auto *remove = new QPushButton("×"); remove->setObjectName("removeTask"); remove->setToolTip("删除任务，可撤销"); remove->setFixedWidth(32);
         rowLayout->addWidget(editButton, 0, Qt::AlignTop); rowLayout->addWidget(remove, 0, Qt::AlignTop);
+        // 回调捕获稳定 ID，不捕获重建后可能失效的容器元素指针。
+        // 勾选/删除会触发整区刷新，延后一轮执行，避免在按钮自身事件中销毁按钮。
         const auto listId = m_active; const auto taskId = task.id;
         connect(check, &QCheckBox::toggled, this, [this, listId, taskId](bool checked) { QTimer::singleShot(0, this, [this, listId, taskId, checked] { if (!m_store->completeTask(listId, taskId, checked)) refresh(); }); });
         connect(editButton, &QPushButton::clicked, this, [this, taskId] { edit(taskId); });
@@ -65,9 +69,11 @@ void TodoWidget::refresh() {
     if (!visible) { auto *empty = new QLabel(list ? "这里暂时没有未完成的任务。\n添加第一项任务，或展开已完成列表。" : "一份清单，一个清晰的开始。"); empty->setAlignment(Qt::AlignCenter); empty->setWordWrap(true); empty->setProperty("role", "muted"); layout->addWidget(empty); }
     layout->addStretch(); delete m_scroll->takeWidget(); m_scroll->setWidget(container);
     const int position = m_positions.contains(m_active) ? m_positions.take(m_active) : oldPosition;
+    // 新内容布局后滚动范围才可靠，下一轮事件中再恢复位置。
     QTimer::singleShot(0, this, [this, position] { m_scroll->verticalScrollBar()->setValue(position); });
 }
 void TodoWidget::edit(const QString &taskId) {
+    // 用任务副本填对话框，确认且 Store 保存成功后才关闭，失败允许继续编辑。
     const auto *list = m_store->find(m_active); if (!list) return;
     TodoTask task; bool found = false; for (const auto &candidate : list->tasks) if (candidate.id == taskId) { task = candidate; found = true; break; } if (!found) return;
     QDialog dialog(this); dialog.setWindowTitle("编辑任务"); dialog.resize(440, 300); auto *layout = new QVBoxLayout(&dialog);
